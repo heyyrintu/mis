@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Excel MIS Report Generator</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Excel MIS Report Generator</h1>
+            <p>Upload your Order Tracking CSV/Excel file and generate 3 MIS reports</p>
+        </header>
+
+        <div class="upload-section">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-content">
+                    <i class="upload-icon">📁</i>
+                    <h3>Drop your Excel/CSV file here</h3>
+                    <p>or <span class="browse-text">browse files</span></p>
+                    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden>
+                </div>
+            </div>
+            <div class="file-info" id="fileInfo" style="display: none;">
+                <p><strong>File:</strong> <span id="fileName"></span></p>
+                <p><strong>Size:</strong> <span id="fileSize"></span></p>
+                <p><strong>Records:</strong> <span id="recordCount"></span></p>
+            </div>
+        </div>
+
+        <div class="generation-section" id="generationSection" style="display: none;">
+            <h2>Generate MIS Reports</h2>
+            <button id="generateReports" class="btn-primary">Generate All 3 Reports</button>
+        </div>
+
+        <div class="results-section" id="resultsSection" style="display: none;">
+            <h2>Generated Reports</h2>
+            
+            <!-- E-Com Excel Report -->
+            <div class="report-container">
+                <div class="report-header">
+                    <h3>1. E-Com Excel Report</h3>
+                    <div class="report-actions">
+                        <span class="record-count" id="ecomCount">0 records</span>
+                        <button class="btn-download" onclick="downloadReport('ecom')">Download Excel</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="ecomTable">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Quick-Com Excel Report -->
+            <div class="report-container">
+                <div class="report-header">
+                    <h3>2. Quick-Com Excel Report</h3>
+                    <div class="report-actions">
+                        <span class="record-count" id="quickcomCount">0 records</span>
+                        <button class="btn-download" onclick="downloadReport('quickcom')">Download Excel</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="quickcomTable">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Offline Excel Report -->
+            <div class="report-container">
+                <div class="report-header">
+                    <h3>3. Offline Excel Report</h3>
+                    <div class="report-actions">
+                        <span class="record-count" id="offlineCount">0 records</span>
+                        <button class="btn-download" onclick="downloadReport('offline')">Download Excel</button>
+                    </div>
+                </div>
+                <div class="table-container">
+                    <table id="offlineTable">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="download-all">
+                <button id="downloadAll" class="btn-primary">Download All 3 Reports</button>
+            </div>
+        </div>
+
+        <div class="error-message" id="errorMessage" style="display: none;">
+            <p id="errorText"></p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
