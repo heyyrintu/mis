@@ -248,17 +248,35 @@ class ExcelMISGenerator {
     generateOfflineReport(data) {
         // Filter for offline channels based on Customer Group
         const offlineData = data.filter(row => {
-            const customerGroup = (row['Customer Group'] || '').toLowerCase();
+            const customerGroup = (row['Customer Group'] || '');
             
             // Check if it's in e-commerce or quick-commerce categories
-            const isEcom = customerGroup.includes('amazon') || customerGroup.includes('flipkart');
-            const isQuickCom = customerGroup.includes('bigbasket') || 
-                              customerGroup.includes('blinkit') || 
-                              customerGroup.includes('zepto') || 
-                              customerGroup.includes('swiggy');
+            const customerGroupLower = customerGroup.toLowerCase();
+            const isEcom = customerGroupLower.includes('amazon') || customerGroupLower.includes('flipkart');
+            const isQuickCom = customerGroupLower.includes('bigbasket') || 
+                              customerGroupLower.includes('blinkit') || 
+                              customerGroupLower.includes('zepto') || 
+                              customerGroupLower.includes('swiggy');
             
-            // If not in those categories, it's offline
-            return !isEcom && !isQuickCom;
+            // List of specific offline customer groups to include
+            const offlineGroups = [
+                'Offline Sales-B2B',
+                'Offline - MT',
+                'Offline – GT',
+                'Corporate Sales Debtors',
+                'Others',
+                'Store 2-Lucknow',
+                'INTERNAL COMPANY',
+                'Store3-Zirakpur'
+            ];
+            
+            // Check if customer group is in the offline list
+            const isSpecificOffline = offlineGroups.some(group => 
+                customerGroup === group || customerGroup.includes(group)
+            );
+            
+            // Include in offline if it's not in e-com or quick-com OR if it's specifically in the offline list
+            return (!isEcom && !isQuickCom) || isSpecificOffline;
         });
 
         // Offline Excel headers
