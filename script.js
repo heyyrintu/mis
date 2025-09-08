@@ -139,58 +139,92 @@ class ExcelMISGenerator {
     }
 
     generateEcomReport(data) {
-        // E-com Excel headers: Vehicle Series, Dispatch Date, Customer Name, Transporter Name, Vehicle No, LR No., Invoice No, Invoice SKU, Invoice Qty, Number of Boxes
-        this.ecomData = data.map(row => ({
-            'Vehicle Series': row['Vehicle No'] || '',
-            'Dispatch Date': row['Actual Dispatch Date'] || row['Delivery Note Date'] || '',
+        // Filter for E-commerce channel based on Customer Group
+        const ecomData = data.filter(row => {
+            const customerGroup = (row['Customer Group'] || '').toLowerCase();
+            return customerGroup.includes('amazon') || customerGroup.includes('flipkart');
+        });
+
+        // E-com Excel headers
+        this.ecomData = ecomData.map(row => ({
+            'Customer Group': row['Customer Group'] || '', // Added Customer Group
+            'Vehicle Series': row['SHIPMENT Vehicle NO'] || '',
+            'Dispatch Date': row['SHIPMENT Pickup DATE'] || row['DELIVERY Note DATE'] || '',
             'Customer Name': row['Customer'] || '',
-            'Transporter Name': row['Transporter Name'] || '',
-            'Vehicle No': row['Vehicle No'] || '',
-            'LR No.': row['AWB Number'] || '',
-            'Invoice No': row['Sales Invoice No'] || row['Delivery Note No'] || '',
-            'Invoice SKU': row['Description of Content'] || 'Standard SKU',
-            'Invoice Qty': row['Sales Invoice Qty'] || row['Delivery Note Qty'] || '',
-            'Number of Boxes': this.calculateBoxes(row['Sales Invoice Qty'] || row['Delivery Note Qty'] || 0)
+            'Transporter Name': row['Transporter'] || '',
+            'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
+            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice SKU': row['SO Item'] || row['Description of Content'] || '',
+            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
+            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
         }));
     }
 
     generateQuickcomReport(data) {
-        // Quick-com Excel headers: Transporter Name, LR No., Invoice No, Invoice Qty, Number of Boxes
-        this.quickcomData = data.map(row => ({
-            'Transporter Name': row['Transporter Name'] || '',
-            'LR No.': row['AWB Number'] || '',
-            'Invoice No': row['Sales Invoice No'] || row['Delivery Note No'] || '',
-            'Invoice Qty': row['Sales Invoice Qty'] || row['Delivery Note Qty'] || '',
-            'Number of Boxes': this.calculateBoxes(row['Sales Invoice Qty'] || row['Delivery Note Qty'] || 0)
+        // Filter for Quick-commerce channel based on Customer Group
+        const quickcomData = data.filter(row => {
+            const customerGroup = (row['Customer Group'] || '').toLowerCase();
+            return customerGroup.includes('bigbasket') || 
+                   customerGroup.includes('blinkit') || 
+                   customerGroup.includes('zepto') || 
+                   customerGroup.includes('swiggy');
+        });
+
+        // Quick-com Excel headers
+        this.quickcomData = quickcomData.map(row => ({
+            'Customer Group': row['Customer Group'] || '', // Added Customer Group
+            'Transporter Name': row['Transporter'] || '',
+            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice SKU': row['SO Item'] || '',
+            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
+            'Per Unit CBM': row['Per Unit CBM'] || '',
+            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
         }));
     }
 
     generateOfflineReport(data) {
-        // Offline Excel headers: Transporter Name, LR No., Invoice No, Invoice Qty, Number of Boxes
-        // Filter for offline/non-online channels
+        // Filter for offline channels based on Customer Group
         const offlineData = data.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            return customerGroup.includes('offline') || 
-                   customerGroup.includes('b2b') || 
-                   customerGroup.includes('gt') ||
-                   !customerGroup.includes('amazon') && 
-                   !customerGroup.includes('flipkart') && 
-                   !customerGroup.includes('blinkit');
+            
+            // Check if it's in e-commerce or quick-commerce categories
+            const isEcom = customerGroup.includes('amazon') || customerGroup.includes('flipkart');
+            const isQuickCom = customerGroup.includes('bigbasket') || 
+                              customerGroup.includes('blinkit') || 
+                              customerGroup.includes('zepto') || 
+                              customerGroup.includes('swiggy');
+            
+            // If not in those categories, it's offline
+            return !isEcom && !isQuickCom;
         });
 
+        // Offline Excel headers
         this.offlineData = offlineData.map(row => ({
-            'Transporter Name': row['Transporter Name'] || '',
-            'LR No.': row['AWB Number'] || '',
-            'Invoice No': row['Sales Invoice No'] || row['Delivery Note No'] || '',
-            'Invoice Qty': row['Sales Invoice Qty'] || row['Delivery Note Qty'] || '',
-            'Number of Boxes': this.calculateBoxes(row['Sales Invoice Qty'] || row['Delivery Note Qty'] || 0)
+            'Customer': row['Customer'] || '',
+            'Customer Group': row['Customer Group'] || '',
+            'Transporter Name': row['Transporter'] || '',
+            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+            'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
+            'Sales Order No': row['Sales Order No'] || '',
+            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice SKU': row['SO Item'] || '',
+            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
+            'Per Unit CBM': row['Per Unit CBM'] || '',
+            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Pickup Date': row['SHIPMENT Pickup DATE'] || '',
+            'Delivered Date': row['DELIVERED Date'] || '',
+            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
         }));
     }
 
     calculateBoxes(qty) {
-        // Calculate number of boxes based on quantity (assuming 10 items per box)
+        // Calculate number of boxes based on quantity
         const quantity = parseFloat(qty) || 0;
-        return Math.max(1, Math.ceil(quantity / 10));
+        return Math.max(1, Math.ceil(quantity / 20));
     }
 
     displayAllReports() {
