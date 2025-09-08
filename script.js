@@ -13,31 +13,55 @@ class ExcelMISGenerator {
         const generateReports = document.getElementById('generateReports');
         const downloadAll = document.getElementById('downloadAll');
 
+        if (!uploadArea || !fileInput) {
+            console.error("Upload elements not found!");
+            return;
+        }
+
         // File upload events
         uploadArea.addEventListener('click', () => fileInput.click());
-        uploadArea.addEventListener('dragover', this.handleDragOver.bind(this));
-        uploadArea.addEventListener('dragleave', this.handleDragLeave.bind(this));
-        uploadArea.addEventListener('drop', this.handleDrop.bind(this));
-        fileInput.addEventListener('change', this.handleFileSelect.bind(this));
+        uploadArea.addEventListener('dragover', (e) => this.handleDragOver(e));
+        uploadArea.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+        uploadArea.addEventListener('drop', (e) => this.handleDrop(e));
+        fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
 
         // Report generation
-        generateReports.addEventListener('click', this.generateAllReports.bind(this));
-        downloadAll.addEventListener('click', this.downloadAllReports.bind(this));
+        if (generateReports) {
+            generateReports.addEventListener('click', () => this.generateAllReports());
+        }
+        
+        if (downloadAll) {
+            downloadAll.addEventListener('click', () => this.downloadAllReports());
+        }
     }
 
     handleDragOver(e) {
         e.preventDefault();
-        document.getElementById('uploadArea').classList.add('dragover');
+        e.stopPropagation();
+        const uploadArea = document.getElementById('uploadArea');
+        if (uploadArea) {
+            uploadArea.classList.add('dragover');
+        }
     }
 
     handleDragLeave(e) {
         e.preventDefault();
-        document.getElementById('uploadArea').classList.remove('dragover');
+        e.stopPropagation();
+        const uploadArea = document.getElementById('uploadArea');
+        if (uploadArea) {
+            uploadArea.classList.remove('dragover');
+        }
     }
 
     handleDrop(e) {
         e.preventDefault();
-        document.getElementById('uploadArea').classList.remove('dragover');
+        e.stopPropagation();
+        
+        const uploadArea = document.getElementById('uploadArea');
+        if (uploadArea) {
+            uploadArea.classList.remove('dragover');
+        }
+        
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             this.processFile(files[0]);
@@ -65,9 +89,15 @@ class ExcelMISGenerator {
         }
 
         // Show file info
-        document.getElementById('fileName').textContent = file.name;
-        document.getElementById('fileSize').textContent = this.formatFileSize(file.size);
-        document.getElementById('fileInfo').style.display = 'block';
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const fileInfo = document.getElementById('fileInfo');
+        
+        if (fileName && fileSize && fileInfo) {
+            fileName.textContent = file.name;
+            fileSize.textContent = this.formatFileSize(file.size);
+            fileInfo.style.display = 'block';
+        }
 
         const reader = new FileReader();
         reader.onload = (e) => {
@@ -88,15 +118,27 @@ class ExcelMISGenerator {
                 this.rawData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
                 
                 if (this.rawData.length > 1) {
-                    document.getElementById('recordCount').textContent = `${this.rawData.length - 1} records`;
-                    document.getElementById('generationSection').style.display = 'block';
+                    const recordCount = document.getElementById('recordCount');
+                    const generationSection = document.getElementById('generationSection');
+                    
+                    if (recordCount && generationSection) {
+                        recordCount.textContent = `${this.rawData.length - 1} records`;
+                        generationSection.style.display = 'block';
+                    }
+                    
                     this.hideError();
                 } else {
                     this.showError('The uploaded file appears to be empty or has no data rows.');
                 }
             } catch (error) {
                 this.showError('Error reading file: ' + error.message);
+                console.error(error);
             }
+        };
+        
+        reader.onerror = (error) => {
+            this.showError('Error reading file: ' + error.message);
+            console.error(error);
         };
         
         if (file.name.toLowerCase().endsWith('.csv')) {
@@ -104,6 +146,12 @@ class ExcelMISGenerator {
         } else {
             reader.readAsArrayBuffer(file);
         }
+    }
+
+    // Format CBM to have exactly two decimal places
+    formatCBM(value) {
+        const cbm = parseFloat(value) || 0;
+        return cbm.toFixed(2);
     }
 
     generateAllReports() {
@@ -130,11 +178,20 @@ class ExcelMISGenerator {
 
             // Display results
             this.displayAllReports();
-            document.getElementById('resultsSection').style.display = 'block';
+            const resultsSection = document.getElementById('resultsSection');
+            if (resultsSection) {
+                resultsSection.style.display = 'block';
+            }
             this.hideError();
+            
+            // Update dashboard with the processed data
+            if (window.dashboard) {
+                window.dashboard.setData(dataObjects);
+            }
 
         } catch (error) {
             this.showError('Error generating reports: ' + error.message);
+            console.error(error);
         }
     }
 
@@ -147,7 +204,7 @@ class ExcelMISGenerator {
 
         // E-com Excel headers
         this.ecomData = ecomData.map(row => ({
-            'Customer Group': row['Customer Group'] || '', // Added Customer Group
+            'Customer Group': row['Customer Group'] || '',
             'Vehicle Series': row['SHIPMENT Vehicle NO'] || '',
             'Dispatch Date': row['SHIPMENT Pickup DATE'] || row['DELIVERY Note DATE'] || '',
             'Customer Name': row['Customer'] || '',
@@ -155,9 +212,10 @@ class ExcelMISGenerator {
             'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
             'LR No.': row['SHIPMENT Awb NUMBER'] || '',
             'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice Date': row['SALES Invoice DATE'] || '',
             'Invoice SKU': row['SO Item'] || row['Description of Content'] || '',
             'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
             'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
         }));
     }
@@ -174,14 +232,15 @@ class ExcelMISGenerator {
 
         // Quick-com Excel headers
         this.quickcomData = quickcomData.map(row => ({
-            'Customer Group': row['Customer Group'] || '', // Added Customer Group
+            'Customer Group': row['Customer Group'] || '',
             'Transporter Name': row['Transporter'] || '',
             'LR No.': row['SHIPMENT Awb NUMBER'] || '',
             'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice Date': row['SALES Invoice DATE'] || '',
             'Invoice SKU': row['SO Item'] || '',
             'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Per Unit CBM': row['Per Unit CBM'] || '',
-            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
+            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
             'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
         }));
     }
@@ -211,10 +270,11 @@ class ExcelMISGenerator {
             'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
             'Sales Order No': row['Sales Order No'] || '',
             'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+            'Invoice Date': row['SALES Invoice DATE'] || '',
             'Invoice SKU': row['SO Item'] || '',
             'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Per Unit CBM': row['Per Unit CBM'] || '',
-            'Total CBM': row['SI Total CBM'] || row['DN Total CBM'] || '',
+            'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
+            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
             'Pickup Date': row['SHIPMENT Pickup DATE'] || '',
             'Delivered Date': row['DELIVERED Date'] || '',
             'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
@@ -235,15 +295,29 @@ class ExcelMISGenerator {
 
     displayReport(tableId, data, countId) {
         const table = document.getElementById(tableId);
+        const countElement = document.getElementById(countId);
+        
+        if (!table) {
+            console.error(`Table with ID ${tableId} not found`);
+            return;
+        }
+        
         const thead = table.querySelector('thead');
         const tbody = table.querySelector('tbody');
+        
+        if (!thead || !tbody) {
+            console.error(`Table with ID ${tableId} is missing thead or tbody`);
+            return;
+        }
         
         // Clear previous content
         thead.innerHTML = '';
         tbody.innerHTML = '';
         
         // Update count
-        document.getElementById(countId).textContent = `${data.length} records`;
+        if (countElement) {
+            countElement.textContent = `${data.length} records`;
+        }
         
         if (data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 20px;">No data available</td></tr>';
@@ -293,6 +367,44 @@ class ExcelMISGenerator {
         setTimeout(() => this.downloadReport('offline'), 1000);
     }
 
+    downloadReport(type) {
+        let data, filename;
+        
+        switch(type) {
+            case 'ecom':
+                data = this.ecomData;
+                filename = 'e-com_excel';
+                break;
+            case 'quickcom':
+                data = this.quickcomData;
+                filename = 'quick-com_excel';
+                break;
+            case 'offline':
+                data = this.offlineData;
+                filename = 'offline_excel';
+                break;
+            default:
+                return;
+        }
+        
+        if (data.length === 0) {
+            this.showError(`No data available for ${filename}.`);
+            return;
+        }
+
+        try {
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'MIS Report');
+
+            const today = new Date().toISOString().split('T')[0];
+            XLSX.writeFile(wb, `${filename}_${today}.xlsx`);
+        } catch (error) {
+            this.showError(`Error downloading ${filename}: ${error.message}`);
+            console.error(error);
+        }
+    }
+
     formatFileSize(bytes) {
         if (bytes === 0) return '0 Bytes';
         const k = 1024;
@@ -302,48 +414,32 @@ class ExcelMISGenerator {
     }
 
     showError(message) {
-        document.getElementById('errorText').textContent = message;
-        document.getElementById('errorMessage').style.display = 'block';
+        const errorText = document.getElementById('errorText');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        if (errorText && errorMessage) {
+            errorText.textContent = message;
+            errorMessage.style.display = 'block';
+        } else {
+            console.error('Error:', message);
+        }
     }
 
     hideError() {
-        document.getElementById('errorMessage').style.display = 'none';
+        const errorMessage = document.getElementById('errorMessage');
+        if (errorMessage) {
+            errorMessage.style.display = 'none';
+        }
     }
 }
 
 // Global function for download buttons
 function downloadReport(type) {
-    const generator = window.misGenerator;
-    let data, filename;
-    
-    switch(type) {
-        case 'ecom':
-            data = generator.ecomData;
-            filename = 'e-com_excel';
-            break;
-        case 'quickcom':
-            data = generator.quickcomData;
-            filename = 'quick-com_excel';
-            break;
-        case 'offline':
-            data = generator.offlineData;
-            filename = 'offline_excel';
-            break;
-        default:
-            return;
+    if (window.misGenerator) {
+        window.misGenerator.downloadReport(type);
+    } else {
+        console.error('MIS Generator not initialized');
     }
-    
-    if (data.length === 0) {
-        generator.showError(`No data available for ${filename}.`);
-        return;
-    }
-
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'MIS Report');
-
-    const today = new Date().toISOString().split('T')[0];
-    XLSX.writeFile(wb, `${filename}_${today}.xlsx`);
 }
 
 // Initialize the application
