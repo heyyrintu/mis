@@ -14,7 +14,7 @@ class MISDashboard {
             return;
         }
         
-        // Create the filter section
+        // Create the modern dashboard layout
         dashboardDiv.innerHTML = `
             <div class="filter-section">
                 <div class="filter-group">
@@ -36,82 +36,118 @@ class MISDashboard {
                 </div>
             </div>
             
-            <div class="dashboard-cards">
-                <div class="card total-card">
-                    <h3>Total</h3>
-                    <div class="card-content">
-                        <div class="stat">
-                            <span class="label">Invoices:</span>
-                            <span id="totalInvoices" class="value">0</span>
+            <div class="dashboard-grid">
+                <!-- Total Card -->
+                <div class="dashboard-card total-card">
+                    <div class="card-header">
+                        <h3>📊 Total</h3>
+                        <div class="card-icon">🎯</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric">
+                            <div class="metric-label">Total Invoices</div>
+                            <div class="metric-value" id="totalInvoices">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Quantity:</span>
-                            <span id="totalQuantity" class="value">0</span>
+                        <div class="metric">
+                            <div class="metric-label">Invoice Quantity</div>
+                            <div class="metric-value" id="totalQuantity">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Total CBM:</span>
-                            <span id="totalCBM" class="value">0.00</span>
+                        <div class="metric">
+                            <div class="metric-label">Total CBM</div>
+                            <div class="metric-value" id="totalCBM">0.00</div>
+                        </div>
+                        <div class="metric" data-metric="lr-pending">
+                            <div class="metric-label">LR Pending</div>
+                            <div class="metric-value" id="totalLRPending">0</div>
                         </div>
                     </div>
                 </div>
                 
-                <div class="card ecom-card">
-                    <h3>E-Commerce</h3>
-                    <div class="card-content">
-                        <div class="stat">
-                            <span class="label">Invoices:</span>
-                            <span id="ecomInvoices" class="value">0</span>
+                <!-- E-Commerce Card -->
+                <div class="dashboard-card ecom-card">
+                    <div class="card-header">
+                        <h3>🛒 E-Commerce</h3>
+                        <div class="card-icon">📱</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric">
+                            <div class="metric-label">Total Invoices</div>
+                            <div class="metric-value" id="ecomInvoices">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Quantity:</span>
-                            <span id="ecomQuantity" class="value">0</span>
+                        <div class="metric">
+                            <div class="metric-label">Invoice Quantity</div>
+                            <div class="metric-value" id="ecomQuantity">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Total CBM:</span>
-                            <span id="ecomCBM" class="value">0.00</span>
+                        <div class="metric">
+                            <div class="metric-label">Total CBM</div>
+                            <div class="metric-value" id="ecomCBM">0.00</div>
+                        </div>
+                        <div class="metric" data-metric="lr-pending">
+                            <div class="metric-label">LR Pending</div>
+                            <div class="metric-value" id="ecomLRPending">0</div>
                         </div>
                     </div>
                 </div>
                 
-                <div class="card quickcom-card">
-                    <h3>Quick-Commerce</h3>
-                    <div class="card-content">
-                        <div class="stat">
-                            <span class="label">Invoices:</span>
-                            <span id="quickcomInvoices" class="value">0</span>
+                <!-- Quick-Commerce Card -->
+                <div class="dashboard-card quickcom-card">
+                    <div class="card-header">
+                        <h3>⚡ Quick-Commerce</h3>
+                        <div class="card-icon">🚀</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric">
+                            <div class="metric-label">Total Invoices</div>
+                            <div class="metric-value" id="quickcomInvoices">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Quantity:</span>
-                            <span id="quickcomQuantity" class="value">0</span>
+                        <div class="metric">
+                            <div class="metric-label">Invoice Quantity</div>
+                            <div class="metric-value" id="quickcomQuantity">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Total CBM:</span>
-                            <span id="quickcomCBM" class="value">0.00</span>
+                        <div class="metric">
+                            <div class="metric-label">Total CBM</div>
+                            <div class="metric-value" id="quickcomCBM">0.00</div>
+                        </div>
+                        <div class="metric" data-metric="lr-pending">
+                            <div class="metric-label">LR Pending</div>
+                            <div class="metric-value" id="quickcomLRPending">0</div>
                         </div>
                     </div>
                 </div>
                 
-                <div class="card offline-card">
-                    <h3>Offline</h3>
-                    <div class="card-content">
-                        <div class="stat">
-                            <span class="label">Invoices:</span>
-                            <span id="offlineInvoices" class="value">0</span>
+                <!-- Offline Card -->
+                <div class="dashboard-card offline-card">
+                    <div class="card-header">
+                        <h3>🏪 Offline</h3>
+                        <div class="card-icon">🏬</div>
+                    </div>
+                    <div class="card-body">
+                        <div class="metric">
+                            <div class="metric-label">Total Invoices</div>
+                            <div class="metric-value" id="offlineInvoices">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Quantity:</span>
-                            <span id="offlineQuantity" class="value">0</span>
+                        <div class="metric">
+                            <div class="metric-label">Invoice Quantity</div>
+                            <div class="metric-value" id="offlineQuantity">0</div>
                         </div>
-                        <div class="stat">
-                            <span class="label">Total CBM:</span>
-                            <span id="offlineCBM" class="value">0.00</span>
+                        <div class="metric">
+                            <div class="metric-label">Total CBM</div>
+                            <div class="metric-value" id="offlineCBM">0.00</div>
+                        </div>
+                        <div class="metric" data-metric="lr-pending">
+                            <div class="metric-label">LR Pending</div>
+                            <div class="metric-value" id="offlineLRPending">0</div>
                         </div>
                     </div>
                 </div>
             </div>
             
-            <div id="dashboardNoData" class="no-data-message">
-                <p>No data available. Please upload a file first.</p>
+            <div id="dashboardNoData" class="no-data-message" style="display: none;">
+                <div class="no-data-content">
+                    <div class="no-data-icon">📄</div>
+                    <h3>No Data Available</h3>
+                    <p>Please upload an Excel file to view dashboard metrics.</p>
+                </div>
             </div>
         `;
     }
@@ -263,13 +299,16 @@ class MISDashboard {
     }
     
     updateDashboard(filteredData) {
+        // Sort filtered data by Sales Invoice Date before processing
+        const sortedData = this.sortDataByDate(filteredData);
+        
         // Group data by category
-        const ecomData = filteredData.filter(row => {
+        const ecomData = sortedData.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
             return customerGroup.includes('amazon') || customerGroup.includes('flipkart');
         });
         
-        const quickcomData = filteredData.filter(row => {
+        const quickcomData = sortedData.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
             return customerGroup.includes('bigbasket') || 
                    customerGroup.includes('blinkit') || 
@@ -277,23 +316,31 @@ class MISDashboard {
                    customerGroup.includes('swiggy');
         });
         
-        const offlineData = filteredData.filter(row => {
+        const offlineData = sortedData.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
             
-            // Check if it's in e-commerce or quick-commerce categories
-            const isEcom = customerGroup.includes('amazon') || customerGroup.includes('flipkart');
-            const isQuickCom = customerGroup.includes('bigbasket') || 
-                              customerGroup.includes('blinkit') || 
-                              customerGroup.includes('zepto') || 
-                              customerGroup.includes('swiggy');
+            // List of platforms to EXCLUDE from offline
+            const excludedPlatforms = [
+                'flipkart',
+                'amazon', 
+                'bigbasket',
+                'blinkit',
+                'zepto',
+                'swiggy'
+            ];
             
-            // If not in those categories, it's offline
-            return !isEcom && !isQuickCom;
+            // Check if customer group contains any of the excluded platforms
+            const isExcluded = excludedPlatforms.some(platform => 
+                customerGroup.includes(platform)
+            );
+            
+            // Include in offline if it's NOT in the excluded platforms list
+            return !isExcluded;
         });
         
         // Calculate statistics
         const stats = {
-            total: this.calculateStats(filteredData),
+            total: this.calculateStats(sortedData),
             ecom: this.calculateStats(ecomData),
             quickcom: this.calculateStats(quickcomData),
             offline: this.calculateStats(offlineData)
@@ -305,48 +352,229 @@ class MISDashboard {
         this.updateCardStats('quickcom', stats.quickcom);
         this.updateCardStats('offline', stats.offline);
     }
+
+    // Sort data by Invoice Date only
+    sortDataByDate(data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            return data;
+        }
+
+        // Get the selected sort order from the main page
+        const sortOrderSelect = document.getElementById('sortOrder');
+        const sortOrder = sortOrderSelect ? sortOrderSelect.value : 'newest';
+
+        return data.sort((a, b) => {
+            // Get Invoice Date from both records (only SALES Invoice DATE)
+            const dateA = this.parseDate(a['SALES Invoice DATE'] || '');
+            const dateB = this.parseDate(b['SALES Invoice DATE'] || '');
+            
+            // If dates are equal, maintain original order
+            if (dateA.getTime() === dateB.getTime()) return 0;
+            
+            // Sort based on selected order
+            if (sortOrder === 'oldest') {
+                return dateA.getTime() - dateB.getTime(); // Oldest first
+            } else {
+                return dateB.getTime() - dateA.getTime(); // Newest first (default)
+            }
+        });
+    }
+
+    // Parse date string and return Date object
+    parseDate(dateStr) {
+        if (!dateStr || dateStr === '') {
+            return new Date(0); // Return epoch for empty dates (will sort to end)
+        }
+
+        try {
+            // Handle various date formats
+            let date;
+            
+            // If it's already a Date object
+            if (dateStr instanceof Date) {
+                date = dateStr;
+            }
+            // If it's a string, try to parse it
+            else if (typeof dateStr === 'string') {
+                // Try different date formats
+                const formats = [
+                    /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
+                    /^\d{2}\/\d{2}\/\d{4}$/, // MM/DD/YYYY
+                    /^\d{2}-\d{2}-\d{4}$/, // MM-DD-YYYY
+                    /^\d{1,2}\/\d{1,2}\/\d{4}$/, // M/D/YYYY
+                    /^\d{1,2}-\d{1,2}-\d{4}$/ // M-D-YYYY
+                ];
+                
+                // Check if it matches any known format
+                const isKnownFormat = formats.some(format => format.test(dateStr.trim()));
+                
+                if (isKnownFormat) {
+                    date = new Date(dateStr);
+                } else {
+                    // Try to parse as-is
+                    date = new Date(dateStr);
+                }
+            } else {
+                date = new Date(dateStr);
+            }
+            
+            // Check if the date is valid
+            if (isNaN(date.getTime())) {
+                console.warn('Invalid date format in dashboard:', dateStr);
+                return new Date(0); // Return epoch for invalid dates
+            }
+            
+            return date;
+        } catch (error) {
+            console.error('Error parsing date in dashboard:', dateStr, error);
+            return new Date(0); // Return epoch for error cases
+        }
+    }
     
     calculateStats(data) {
-        // Count unique invoices (using SALES Invoice NO or DELIVERY Note NO)
-        const uniqueInvoices = new Set();
-        data.forEach(row => {
-            const invoiceNo = row['SALES Invoice NO'] || row['DELIVERY Note NO'];
-            if (invoiceNo) uniqueInvoices.add(invoiceNo);
-        });
-        
-        // Calculate total quantity
-        let totalQuantity = 0;
-        data.forEach(row => {
-            const qty = parseFloat(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0);
-            if (!isNaN(qty)) totalQuantity += qty;
-        });
-        
-        // Calculate total CBM
-        let totalCBM = 0;
-        data.forEach(row => {
-            const cbm = parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0);
-            if (!isNaN(cbm)) totalCBM += cbm;
-        });
-        
-        return {
-            invoices: uniqueInvoices.size,
-            quantity: Math.round(totalQuantity),
-            cbm: totalCBM.toFixed(2)
-        };
+        if (!Array.isArray(data) || data.length === 0) {
+            return {
+                invoices: 0,
+                quantity: 0,
+                cbm: '0.00',
+                lrPending: 0
+            };
+        }
+
+        try {
+            // Count unique invoices (using SALES Invoice NO or DELIVERY Note NO)
+            const uniqueInvoices = new Set();
+            data.forEach(row => {
+                if (row && typeof row === 'object') {
+                    const invoiceNo = row['SALES Invoice NO'] || row['DELIVERY Note NO'];
+                    if (invoiceNo && invoiceNo.toString().trim() !== '') {
+                        uniqueInvoices.add(invoiceNo.toString().trim());
+                    }
+                }
+            });
+            
+            // Calculate total quantity using the same logic as script.js (with fallback)
+            let totalQuantity = 0;
+            data.forEach(row => {
+                if (row && typeof row === 'object') {
+                    const qty = this.getQuantity(row);
+                    totalQuantity += qty;
+                }
+            });
+            
+            // Calculate total CBM (ensuring non-negative values)
+            let totalCBM = 0;
+            data.forEach(row => {
+                if (row && typeof row === 'object') {
+                    const cbm = parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0);
+                    if (!isNaN(cbm) && cbm >= 0) {
+                        totalCBM += cbm;
+                    }
+                }
+            });
+            
+            // Calculate LR Pending - records without LR Number
+            let lrPending = 0;
+            data.forEach(row => {
+                if (row && typeof row === 'object') {
+                    const lrNo = row['SHIPMENT Awb NUMBER'] || '';
+                    // Count as pending if LR Number is empty, null, or just whitespace
+                    if (!lrNo || lrNo.toString().trim() === '') {
+                        lrPending++;
+                    }
+                }
+            });
+            
+            return {
+                invoices: uniqueInvoices.size,
+                quantity: Math.round(totalQuantity),
+                cbm: totalCBM.toFixed(2),
+                lrPending: lrPending
+            };
+        } catch (error) {
+            console.error('Error calculating stats:', error);
+            return {
+                invoices: 0,
+                quantity: 0,
+                cbm: '0.00',
+                lrPending: 0
+            };
+        }
+    }
+    
+    // Get the quantity as a proper number (ensuring non-negative values)
+    // This method matches the logic from script.js to ensure consistency
+    getQuantity(row) {
+        if (!row || typeof row !== 'object') {
+            console.warn('Invalid row provided to getQuantity in dashboard');
+            return 0;
+        }
+
+        try {
+            // First try to get the quantity from SALES Invoice QTY
+            let qty = row['SALES Invoice QTY'];
+            
+            // If that's not available or is zero, try DELIVERY Note QTY
+            if (!qty || qty === 0 || qty === '0') {
+                qty = row['DELIVERY Note QTY'];
+            }
+            
+            // Handle null/undefined values
+            if (qty === null || qty === undefined) {
+                return 0;
+            }
+            
+            // Convert to a number, handling various formats
+            if (typeof qty === 'string') {
+                // Remove any non-numeric characters except decimal point and minus sign
+                qty = qty.replace(/[^\d.-]/g, '');
+                
+                // Handle empty string after cleaning
+                if (qty === '' || qty === '-') {
+                    return 0;
+                }
+            }
+            
+            // Parse as float and default to 0 if NaN
+            const numQty = parseFloat(qty);
+            const finalQty = isNaN(numQty) ? 0 : numQty;
+            
+            // Ensure we don't return negative quantities (additional safety check)
+            return Math.max(0, finalQty);
+        } catch (error) {
+            console.error('Error in dashboard getQuantity:', error, row);
+            return 0;
+        }
     }
     
     updateCardStats(cardType, stats) {
         const invoicesElement = document.getElementById(`${cardType}Invoices`);
         const quantityElement = document.getElementById(`${cardType}Quantity`);
         const cbmElement = document.getElementById(`${cardType}CBM`);
+        const lrPendingElement = document.getElementById(`${cardType}LRPending`);
         
-        if (invoicesElement) invoicesElement.textContent = stats.invoices;
-        if (quantityElement) quantityElement.textContent = stats.quantity;
-        if (cbmElement) cbmElement.textContent = stats.cbm;
+        if (invoicesElement) {
+            invoicesElement.textContent = stats.invoices.toLocaleString();
+        }
+        if (quantityElement) {
+            quantityElement.textContent = stats.quantity.toLocaleString();
+        }
+        if (cbmElement) {
+            cbmElement.textContent = parseFloat(stats.cbm).toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
+        if (lrPendingElement) {
+            lrPendingElement.textContent = stats.lrPending.toLocaleString();
+        }
     }
 }
 
 // Initialize the dashboard when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.dashboard = new MISDashboard();
+    // Check authentication before initializing dashboard
+    if (window.auth && window.auth.isUserAuthenticated()) {
+        window.dashboard = new MISDashboard();
+    }
 });

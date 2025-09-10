@@ -18,20 +18,51 @@ class ExcelMISGenerator {
             return;
         }
 
-        // File upload events
-        uploadArea.addEventListener('click', () => fileInput.click());
+        // File upload events (check upload permission)
+        uploadArea.addEventListener('click', () => {
+            if (window.auth && window.auth.canUpload()) {
+                fileInput.click();
+            } else {
+                this.showError('You do not have permission to upload files. Contact administrator.');
+            }
+        });
+        
         uploadArea.addEventListener('dragover', (e) => this.handleDragOver(e));
         uploadArea.addEventListener('dragleave', (e) => this.handleDragLeave(e));
         uploadArea.addEventListener('drop', (e) => this.handleDrop(e));
         fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
 
-        // Report generation
+        // Report generation (check write permission)
         if (generateReports) {
-            generateReports.addEventListener('click', () => this.generateAllReports());
+            generateReports.addEventListener('click', () => {
+                if (window.auth && window.auth.canWrite()) {
+                    this.generateAllReports();
+                } else {
+                    this.showError('You do not have permission to generate reports. Contact administrator.');
+                }
+            });
         }
         
+        // Download functionality (check download permission)
         if (downloadAll) {
-            downloadAll.addEventListener('click', () => this.downloadAllReports());
+            downloadAll.addEventListener('click', () => {
+                if (window.auth && window.auth.canDownload()) {
+                    this.downloadAllReports();
+                } else {
+                    this.showError('You do not have permission to download files. Contact administrator.');
+                }
+            });
+        }
+
+        // Add event listener for sort order changes
+        const sortOrderSelect = document.getElementById('sortOrder');
+        if (sortOrderSelect) {
+            sortOrderSelect.addEventListener('change', () => {
+                // Re-sort and re-display reports if data is already loaded
+                if (this.ecomData.length > 0 || this.quickcomData.length > 0 || this.offlineData.length > 0) {
+                    this.displayAllReports();
+                }
+            });
         }
     }
 
@@ -148,10 +179,72 @@ class ExcelMISGenerator {
         }
     }
 
-    // Format CBM to have exactly two decimal places
+    // Format CBM to have exactly two decimal places (ensuring non-negative values)
     formatCBM(value) {
-        const cbm = parseFloat(value) || 0;
-        return cbm.toFixed(2);
+        try {
+            if (value === null || value === undefined || value === '') {
+                return '0.00';
+            }
+            
+            const cbm = parseFloat(value);
+            
+            // Handle NaN values
+            if (isNaN(cbm)) {
+                console.warn('Invalid CBM value:', value);
+                return '0.00';
+            }
+            
+            // Ensure we don't format negative CBM values (additional safety check)
+            const safeCBM = Math.max(0, cbm);
+            return safeCBM.toFixed(2);
+        } catch (error) {
+            console.error('Error formatting CBM:', error, value);
+            return '0.00';
+        }
+    }
+
+    // Get the quantity as a proper number (ensuring non-negative values)
+    getQuantity(row) {
+        if (!row || typeof row !== 'object') {
+            console.warn('Invalid row provided to getQuantity');
+            return 0;
+        }
+
+        try {
+            // First try to get the quantity from SALES Invoice QTY
+            let qty = row['SALES Invoice QTY'];
+            
+            // If that's not available or is zero, try DELIVERY Note QTY
+            if (!qty || qty === 0 || qty === '0') {
+                qty = row['DELIVERY Note QTY'];
+            }
+            
+            // Handle null/undefined values
+            if (qty === null || qty === undefined) {
+                return 0;
+            }
+            
+            // Convert to a number, handling various formats
+            if (typeof qty === 'string') {
+                // Remove any non-numeric characters except decimal point and minus sign
+                qty = qty.replace(/[^\d.-]/g, '');
+                
+                // Handle empty string after cleaning
+                if (qty === '' || qty === '-') {
+                    return 0;
+                }
+            }
+            
+            // Parse as float and default to 0 if NaN
+            const numQty = parseFloat(qty);
+            const finalQty = isNaN(numQty) ? 0 : numQty;
+            
+            // Ensure we don't return negative quantities (additional safety check)
+            return Math.max(0, finalQty);
+        } catch (error) {
+            console.error('Error in getQuantity:', error, row);
+            return 0;
+        }
     }
 
     generateAllReports() {
@@ -170,11 +263,24 @@ class ExcelMISGenerator {
                 });
                 return obj;
             });
+            
+            // Log initial data stats
+            console.log('📋 INITIAL DATA STATS:');
+            console.log(`   Raw data rows: ${this.rawData.length}`);
+            console.log(`   Headers count: ${headers.length}`);
+            console.log(`   Data objects created: ${dataObjects.length}`);
+            console.log(`   Sample headers: ${headers.slice(0, 5).join(', ')}...`);
 
-            // Generate all three reports
-            this.generateEcomReport(dataObjects);
-            this.generateQuickcomReport(dataObjects);
-            this.generateOfflineReport(dataObjects);
+            // Filter out rows with negative CBM and invoice quantity values BEFORE categorization
+            console.log('🔍 Starting data filtering process...');
+            const filteredData = this.filterNegativeValues(dataObjects);
+            
+            console.log(`✅ Filtering complete! Processing ${filteredData.length} valid rows for report generation`);
+
+            // Generate all three reports with filtered data
+            this.generateEcomReport(filteredData);
+            this.generateQuickcomReport(filteredData);
+            this.generateOfflineReport(filteredData);
 
             // Display results
             this.displayAllReports();
@@ -184,15 +290,283 @@ class ExcelMISGenerator {
             }
             this.hideError();
             
-            // Update dashboard with the processed data
+            // Show filtering notification to user
+            this.showFilteringNotification(dataObjects.length, filteredData.length);
+            
+            // Update dashboard with the filtered data
             if (window.dashboard) {
-                window.dashboard.setData(dataObjects);
+                window.dashboard.setData(filteredData);
+            } else {
+                // Initialize dashboard if not already done
+                window.dashboard = new MISDashboard();
+                window.dashboard.setData(filteredData);
             }
+
+            // Store data in localStorage for LR Pending page
+            try {
+                localStorage.setItem('excelData', JSON.stringify(filteredData));
+                console.log('Stored filtered data in localStorage:', filteredData.length, 'records');
+                
+                // Also store raw data for reference
+                localStorage.setItem('rawExcelData', JSON.stringify(dataObjects));
+                console.log('Stored raw data in localStorage:', dataObjects.length, 'records');
+                
+                // Store in instance for direct access
+                this.filteredData = filteredData;
+            } catch (error) {
+                console.warn('Could not store data in localStorage:', error);
+            }
+
+            // Log total quantities for verification
+            this.logTotalQuantities();
+            
+            // Log detailed quantity breakdown for debugging
+            this.logQuantityBreakdown(filteredData);
+            
+            // Validate data integrity for large files
+            this.validateDataIntegrity(dataObjects, filteredData);
+
+            // Show LR Missing section
+            showLRMissingSection();
+            updateLRMissingData(filteredData);
 
         } catch (error) {
             this.showError('Error generating reports: ' + error.message);
             console.error(error);
         }
+    }
+
+    // Enhanced method to filter out rows with negative CBM and quantity values
+    filterNegativeValues(data) {
+        if (!Array.isArray(data) || data.length === 0) {
+            console.warn('⚠️ No data provided to filterNegativeValues');
+            return [];
+        }
+
+        let filteredCount = 0;
+        let negativeCBMCount = 0;
+        let negativeQtyCount = 0;
+        
+        const filteredData = data.filter(row => {
+            try {
+                // Check CBM values with better error handling
+                const siTotalCBM = parseFloat(row['SI Total CBM'] || 0);
+                const dnTotalCBM = parseFloat(row['DN Total CBM'] || 0);
+                const perUnitCBM = parseFloat(row['Per Unit CBM'] || 0);
+                
+                // Check quantity values using the same logic as getQuantity
+                const salesQty = parseFloat(row['SALES Invoice QTY'] || 0);
+                const deliveryQty = parseFloat(row['DELIVERY Note QTY'] || 0);
+                
+                // Filter out rows where any CBM value is negative
+                const hasNegativeCBM = siTotalCBM < 0 || dnTotalCBM < 0 || perUnitCBM < 0;
+                
+                // Filter out rows where any quantity value is negative
+                const hasNegativeQty = salesQty < 0 || deliveryQty < 0;
+                
+                // Count filtered rows
+                if (hasNegativeCBM || hasNegativeQty) {
+                    filteredCount++;
+                    if (hasNegativeCBM) negativeCBMCount++;
+                    if (hasNegativeQty) negativeQtyCount++;
+                    
+                    // Only log in development mode to avoid console spam
+                    if (process?.env?.NODE_ENV !== 'production') {
+                        console.log('🚫 Filtered out row:', {
+                            invoice: row['SALES Invoice NO'] || row['DELIVERY Note NO'],
+                            customer: row['Customer'] || 'N/A',
+                            customerGroup: row['Customer Group'] || 'N/A',
+                            siTotalCBM: siTotalCBM.toFixed(2),
+                            dnTotalCBM: dnTotalCBM.toFixed(2),
+                            perUnitCBM: perUnitCBM.toFixed(2),
+                            salesQty: salesQty.toFixed(2),
+                            deliveryQty: deliveryQty.toFixed(2),
+                            reason: hasNegativeCBM ? 'Negative CBM' : 'Negative Quantity'
+                        });
+                    }
+                }
+                
+                // Keep only rows with non-negative values
+                return !hasNegativeCBM && !hasNegativeQty;
+            } catch (error) {
+                console.error('Error filtering row:', error, row);
+                // Include row in filtered data if there's an error parsing it
+                return true;
+            }
+        });
+        
+        // Log comprehensive filtering summary
+        console.log('📊 FILTERING SUMMARY:');
+        console.log(`   Original rows: ${data.length}`);
+        console.log(`   Filtered out: ${filteredCount} rows`);
+        console.log(`   - Negative CBM: ${negativeCBMCount} rows`);
+        console.log(`   - Negative Quantity: ${negativeQtyCount} rows`);
+        console.log(`   Valid rows remaining: ${filteredData.length}`);
+        console.log(`   Filtering rate: ${((filteredCount / data.length) * 100).toFixed(2)}%`);
+        
+        return filteredData;
+    }
+
+    logTotalQuantities() {
+        // Calculate total quantities for verification
+        let ecomTotal = 0;
+        let quickcomTotal = 0;
+        let offlineTotal = 0;
+        
+        // Calculate LR Pending for each category
+        let ecomLRPending = 0;
+        let quickcomLRPending = 0;
+        let offlineLRPending = 0;
+        
+        this.ecomData.forEach(item => {
+            const qty = parseFloat(item['Invoice Qty']) || 0;
+            ecomTotal += Math.max(0, qty); // Ensure non-negative
+            
+            // Check for LR Pending
+            const lrNo = item['LR No.'] || '';
+            if (!lrNo || lrNo.toString().trim() === '') {
+                ecomLRPending++;
+            }
+        });
+        
+        this.quickcomData.forEach(item => {
+            const qty = parseFloat(item['Invoice Qty']) || 0;
+            quickcomTotal += Math.max(0, qty); // Ensure non-negative
+            
+            // Check for LR Pending
+            const lrNo = item['LR No.'] || '';
+            if (!lrNo || lrNo.toString().trim() === '') {
+                quickcomLRPending++;
+            }
+        });
+        
+        this.offlineData.forEach(item => {
+            const qty = parseFloat(item['Invoice Qty']) || 0;
+            offlineTotal += Math.max(0, qty); // Ensure non-negative
+            
+            // Check for LR Pending
+            const lrNo = item['LR No.'] || '';
+            if (!lrNo || lrNo.toString().trim() === '') {
+                offlineLRPending++;
+            }
+        });
+        
+        const grandTotal = ecomTotal + quickcomTotal + offlineTotal;
+        const totalLRPending = ecomLRPending + quickcomLRPending + offlineLRPending;
+        
+        console.log('=== PROCESSED DATA SUMMARY (After filtering negative values) ===');
+        console.log('E-commerce - Records:', this.ecomData.length, '| Total Quantity:', ecomTotal.toFixed(2), '| LR Pending:', ecomLRPending);
+        console.log('Quick-commerce - Records:', this.quickcomData.length, '| Total Quantity:', quickcomTotal.toFixed(2), '| LR Pending:', quickcomLRPending);
+        console.log('Offline - Records:', this.offlineData.length, '| Total Quantity:', offlineTotal.toFixed(2), '| LR Pending:', offlineLRPending);
+        console.log('GRAND TOTAL - Records:', (this.ecomData.length + this.quickcomData.length + this.offlineData.length), '| Total Quantity:', grandTotal.toFixed(2), '| Total LR Pending:', totalLRPending);
+        console.log('================================================================');
+    }
+    
+    logQuantityBreakdown(data) {
+        let salesInvoiceTotal = 0;
+        let deliveryNoteTotal = 0;
+        let fallbackUsed = 0;
+        let zeroQuantities = 0;
+        let negativeQuantities = 0;
+        let invalidQuantities = 0;
+        let maxSalesQty = 0;
+        let maxDeliveryQty = 0;
+        
+        data.forEach(row => {
+            const salesQty = parseFloat(row['SALES Invoice QTY'] || 0);
+            const deliveryQty = parseFloat(row['DELIVERY Note QTY'] || 0);
+            
+            // Track maximum values
+            if (salesQty > maxSalesQty) maxSalesQty = salesQty;
+            if (deliveryQty > maxDeliveryQty) maxDeliveryQty = deliveryQty;
+            
+            // Count negative values
+            if (salesQty < 0) negativeQuantities++;
+            if (deliveryQty < 0) negativeQuantities++;
+            
+            // Count invalid values
+            if (isNaN(salesQty) && row['SALES Invoice QTY']) invalidQuantities++;
+            if (isNaN(deliveryQty) && row['DELIVERY Note QTY']) invalidQuantities++;
+            
+            if (salesQty > 0) {
+                salesInvoiceTotal += salesQty;
+            }
+            if (deliveryQty > 0) {
+                deliveryNoteTotal += deliveryQty;
+            }
+            
+            // Check if fallback was used
+            if ((!salesQty || salesQty === 0) && deliveryQty > 0) {
+                fallbackUsed++;
+            }
+            
+            // Check for zero quantities
+            if (salesQty === 0 && deliveryQty === 0) {
+                zeroQuantities++;
+            }
+        });
+        
+        console.log('📊 DETAILED QUANTITY BREAKDOWN ANALYSIS:');
+        console.log(`   Total rows processed: ${data.length.toLocaleString()}`);
+        console.log(`   Total SALES Invoice QTY: ${salesInvoiceTotal.toLocaleString()}`);
+        console.log(`   Total DELIVERY Note QTY: ${deliveryNoteTotal.toLocaleString()}`);
+        console.log(`   Rows using DELIVERY Note fallback: ${fallbackUsed.toLocaleString()}`);
+        console.log(`   Rows with zero quantities: ${zeroQuantities.toLocaleString()}`);
+        console.log(`   Rows with negative quantities: ${negativeQuantities.toLocaleString()}`);
+        console.log(`   Rows with invalid quantities: ${invalidQuantities.toLocaleString()}`);
+        console.log(`   Max SALES Invoice QTY: ${maxSalesQty.toLocaleString()}`);
+        console.log(`   Max DELIVERY Note QTY: ${maxDeliveryQty.toLocaleString()}`);
+        console.log(`   Expected total (with fallback): ${(salesInvoiceTotal + deliveryNoteTotal).toLocaleString()}`);
+        console.log('===============================================================');
+    }
+    
+    validateDataIntegrity(originalData, filteredData) {
+        const originalCount = originalData.length;
+        const filteredCount = filteredData.length;
+        const removedCount = originalCount - filteredCount;
+        
+        // Calculate totals from original data
+        let originalTotalQty = 0;
+        let originalTotalCBM = 0;
+        
+        originalData.forEach(row => {
+            const qty = this.getQuantity(row);
+            const cbm = parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0);
+            originalTotalQty += qty;
+            originalTotalCBM += Math.max(0, cbm);
+        });
+        
+        // Calculate totals from filtered data
+        let filteredTotalQty = 0;
+        let filteredTotalCBM = 0;
+        
+        filteredData.forEach(row => {
+            const qty = this.getQuantity(row);
+            const cbm = parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0);
+            filteredTotalQty += qty;
+            filteredTotalCBM += Math.max(0, cbm);
+        });
+        
+        console.log('🔍 DATA INTEGRITY VALIDATION:');
+        console.log(`   Original rows: ${originalCount.toLocaleString()}`);
+        console.log(`   Filtered rows: ${filteredCount.toLocaleString()}`);
+        console.log(`   Removed rows: ${removedCount.toLocaleString()} (${((removedCount/originalCount)*100).toFixed(2)}%)`);
+        console.log(`   Original total quantity: ${originalTotalQty.toLocaleString()}`);
+        console.log(`   Filtered total quantity: ${filteredTotalQty.toLocaleString()}`);
+        console.log(`   Quantity difference: ${(originalTotalQty - filteredTotalQty).toLocaleString()}`);
+        console.log(`   Original total CBM: ${originalTotalCBM.toFixed(2)}`);
+        console.log(`   Filtered total CBM: ${filteredTotalCBM.toFixed(2)}`);
+        console.log(`   CBM difference: ${(originalTotalCBM - filteredTotalCBM).toFixed(2)}`);
+        
+        // Check for potential issues
+        if (removedCount > originalCount * 0.1) {
+            console.warn('⚠️  WARNING: More than 10% of data was filtered out!');
+        }
+        if ((originalTotalQty - filteredTotalQty) > originalTotalQty * 0.1) {
+            console.warn('⚠️  WARNING: More than 10% of quantity was lost in filtering!');
+        }
+        
+        console.log('===============================================================');
     }
 
     generateEcomReport(data) {
@@ -203,21 +577,25 @@ class ExcelMISGenerator {
         });
 
         // E-com Excel headers
-        this.ecomData = ecomData.map(row => ({
-            'Customer Group': row['Customer Group'] || '',
-            'Vehicle Series': row['SHIPMENT Vehicle NO'] || '',
-            'Dispatch Date': row['SHIPMENT Pickup DATE'] || row['DELIVERY Note DATE'] || '',
-            'Customer Name': row['Customer'] || '',
-            'Transporter Name': row['Transporter'] || '',
-            'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
-            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
-            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
-            'Invoice Date': row['SALES Invoice DATE'] || '',
-            'Invoice SKU': row['SO Item'] || row['Description of Content'] || '',
-            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
-            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
-        }));
+        this.ecomData = ecomData.map(row => {
+            const quantity = this.getQuantity(row);
+            
+            return {
+                'Customer Group': row['Customer Group'] || '',
+                'Vehicle Series': row['SHIPMENT Vehicle NO'] || '',
+                'Dispatch Date': row['SHIPMENT Pickup DATE'] || row['DELIVERY Note DATE'] || '',
+                'Customer Name': row['Customer'] || '',
+                'Transporter Name': row['Transporter'] || '',
+                'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
+                'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+                'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+                'Invoice Date': row['SALES Invoice DATE'] || '',
+                'Invoice SKU': row['SO Item'] || row['Description of Content'] || '',
+                'Invoice Qty': quantity,
+                'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
+                'Number of Boxes': this.calculateBoxes(quantity)
+            };
+        });
     }
 
     generateQuickcomReport(data) {
@@ -231,72 +609,73 @@ class ExcelMISGenerator {
         });
 
         // Quick-com Excel headers
-        this.quickcomData = quickcomData.map(row => ({
-            'Customer Group': row['Customer Group'] || '',
-            'Transporter Name': row['Transporter'] || '',
-            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
-            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
-            'Invoice Date': row['SALES Invoice DATE'] || '',
-            'Invoice SKU': row['SO Item'] || '',
-            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
-            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
-            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
-        }));
+        this.quickcomData = quickcomData.map(row => {
+            const quantity = this.getQuantity(row);
+            
+            return {
+                'Customer Group': row['Customer Group'] || '',
+                'Transporter Name': row['Transporter'] || '',
+                'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+                'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+                'Invoice Date': row['SALES Invoice DATE'] || '',
+                'Invoice SKU': row['SO Item'] || '',
+                'Invoice Qty': quantity,
+                'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
+                'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
+                'Number of Boxes': this.calculateBoxes(quantity)
+            };
+        });
     }
 
     generateOfflineReport(data) {
-        // Filter for offline channels based on Customer Group
+        // Filter for offline channels - include everything EXCEPT specified platforms
         const offlineData = data.filter(row => {
             const customerGroup = (row['Customer Group'] || '');
             
-            // Check if it's in e-commerce or quick-commerce categories
+            // Convert to lowercase for case-insensitive comparison
             const customerGroupLower = customerGroup.toLowerCase();
-            const isEcom = customerGroupLower.includes('amazon') || customerGroupLower.includes('flipkart');
-            const isQuickCom = customerGroupLower.includes('bigbasket') || 
-                              customerGroupLower.includes('blinkit') || 
-                              customerGroupLower.includes('zepto') || 
-                              customerGroupLower.includes('swiggy');
             
-            // List of specific offline customer groups to include
-            const offlineGroups = [
-                'Offline Sales-B2B',
-                'Offline - MT',
-                'Offline – GT',
-                'Corporate Sales Debtors',
-                'Others',
-                'Store 2-Lucknow',
-                'INTERNAL COMPANY',
-                'Store3-Zirakpur'
+            // List of platforms to EXCLUDE from offline
+            const excludedPlatforms = [
+                'flipkart',
+                'amazon', 
+                'bigbasket',
+                'blinkit',
+                'zepto',
+                'swiggy'
             ];
             
-            // Check if customer group is in the offline list
-            const isSpecificOffline = offlineGroups.some(group => 
-                customerGroup === group || customerGroup.includes(group)
+            // Check if customer group contains any of the excluded platforms
+            const isExcluded = excludedPlatforms.some(platform => 
+                customerGroupLower.includes(platform)
             );
             
-            // Include in offline if it's not in e-com or quick-com OR if it's specifically in the offline list
-            return (!isEcom && !isQuickCom) || isSpecificOffline;
+            // Include in offline if it's NOT in the excluded platforms list
+            return !isExcluded;
         });
 
         // Offline Excel headers
-        this.offlineData = offlineData.map(row => ({
-            'Customer': row['Customer'] || '',
-            'Customer Group': row['Customer Group'] || '',
-            'Transporter Name': row['Transporter'] || '',
-            'LR No.': row['SHIPMENT Awb NUMBER'] || '',
-            'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
-            'Sales Order No': row['Sales Order No'] || '',
-            'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
-            'Invoice Date': row['SALES Invoice DATE'] || '',
-            'Invoice SKU': row['SO Item'] || '',
-            'Invoice Qty': row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || '',
-            'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
-            'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
-            'Pickup Date': row['SHIPMENT Pickup DATE'] || '',
-            'Delivered Date': row['DELIVERED Date'] || '',
-            'Number of Boxes': this.calculateBoxes(row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0)
-        }));
+        this.offlineData = offlineData.map(row => {
+            const quantity = this.getQuantity(row);
+            
+            return {
+                'Customer': row['Customer'] || '',
+                'Customer Group': row['Customer Group'] || '',
+                'Transporter Name': row['Transporter'] || '',
+                'LR No.': row['SHIPMENT Awb NUMBER'] || '',
+                'Vehicle No': row['SHIPMENT Vehicle NO'] || '',
+                'Sales Order No': row['Sales Order No'] || '',
+                'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || '',
+                'Invoice Date': row['SALES Invoice DATE'] || '',
+                'Invoice SKU': row['SO Item'] || '',
+                'Invoice Qty': quantity,
+                'Per Unit CBM': this.formatCBM(row['Per Unit CBM'] || 0),
+                'Total CBM': this.formatCBM(row['SI Total CBM'] || row['DN Total CBM'] || 0),
+                'Pickup Date': row['SHIPMENT Pickup DATE'] || '',
+                'Delivered Date': row['DELIVERED Date'] || '',
+                'Number of Boxes': this.calculateBoxes(quantity)
+            };
+        });
     }
 
     calculateBoxes(qty) {
@@ -306,9 +685,91 @@ class ExcelMISGenerator {
     }
 
     displayAllReports() {
+        // Sort all data by Sales Invoice Date before displaying
+        this.sortDataByDate();
+        
         this.displayReport('ecomTable', this.ecomData, 'ecomCount');
         this.displayReport('quickcomTable', this.quickcomData, 'quickcomCount');
         this.displayReport('offlineTable', this.offlineData, 'offlineCount');
+    }
+
+    // Sort data by Invoice Date only
+    sortDataByDate() {
+        // Get the selected sort order
+        const sortOrderSelect = document.getElementById('sortOrder');
+        const sortOrder = sortOrderSelect ? sortOrderSelect.value : 'newest';
+        
+        const sortByDate = (a, b) => {
+            // Get Invoice Date from both records (only SALES Invoice DATE)
+            const dateA = this.parseDate(a['SALES Invoice DATE'] || '');
+            const dateB = this.parseDate(b['SALES Invoice DATE'] || '');
+            
+            // If dates are equal, maintain original order
+            if (dateA.getTime() === dateB.getTime()) return 0;
+            
+            // Sort based on selected order
+            if (sortOrder === 'oldest') {
+                return dateA.getTime() - dateB.getTime(); // Oldest first
+            } else {
+                return dateB.getTime() - dateA.getTime(); // Newest first (default)
+            }
+        };
+
+        // Sort each report data
+        this.ecomData.sort(sortByDate);
+        this.quickcomData.sort(sortByDate);
+        this.offlineData.sort(sortByDate);
+    }
+
+    // Parse date string and return Date object
+    parseDate(dateStr) {
+        if (!dateStr || dateStr === '') {
+            return new Date(0); // Return epoch for empty dates (will sort to end)
+        }
+
+        try {
+            // Handle various date formats
+            let date;
+            
+            // If it's already a Date object
+            if (dateStr instanceof Date) {
+                date = dateStr;
+            }
+            // If it's a string, try to parse it
+            else if (typeof dateStr === 'string') {
+                // Try different date formats
+                const formats = [
+                    /^\d{4}-\d{2}-\d{2}$/, // YYYY-MM-DD
+                    /^\d{2}\/\d{2}\/\d{4}$/, // MM/DD/YYYY
+                    /^\d{2}-\d{2}-\d{4}$/, // MM-DD-YYYY
+                    /^\d{1,2}\/\d{1,2}\/\d{4}$/, // M/D/YYYY
+                    /^\d{1,2}-\d{1,2}-\d{4}$/ // M-D-YYYY
+                ];
+                
+                // Check if it matches any known format
+                const isKnownFormat = formats.some(format => format.test(dateStr.trim()));
+                
+                if (isKnownFormat) {
+                    date = new Date(dateStr);
+                } else {
+                    // Try to parse as-is
+                    date = new Date(dateStr);
+                }
+            } else {
+                date = new Date(dateStr);
+            }
+            
+            // Check if the date is valid
+            if (isNaN(date.getTime())) {
+                console.warn('Invalid date format:', dateStr);
+                return new Date(0); // Return epoch for invalid dates
+            }
+            
+            return date;
+        } catch (error) {
+            console.error('Error parsing date:', dateStr, error);
+            return new Date(0); // Return epoch for error cases
+        }
     }
 
     displayReport(tableId, data, countId) {
@@ -358,7 +819,14 @@ class ExcelMISGenerator {
             const tr = document.createElement('tr');
             headers.forEach(header => {
                 const td = document.createElement('td');
-                td.textContent = row[header] || '';
+                
+                // Format quantity values consistently
+                if (header === 'Invoice Qty') {
+                    td.textContent = parseFloat(row[header] || 0).toString();
+                } else {
+                    td.textContent = row[header] || '';
+                }
+                
                 tr.appendChild(td);
             });
             tbody.appendChild(tr);
@@ -449,10 +917,58 @@ class ExcelMISGenerator {
             errorMessage.style.display = 'none';
         }
     }
+    
+    showFilteringNotification(originalCount, filteredCount) {
+        const filteredRows = originalCount - filteredCount;
+        if (filteredRows > 0) {
+            // Create a temporary notification
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #fff3cd;
+                border: 1px solid #ffeaa7;
+                border-radius: 8px;
+                padding: 15px 20px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                z-index: 1000;
+                max-width: 400px;
+                font-family: Arial, sans-serif;
+            `;
+            
+            notification.innerHTML = `
+                <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                    <span style="font-size: 20px; margin-right: 10px;">⚠️</span>
+                    <strong style="color: #856404;">Data Filtering Applied</strong>
+                </div>
+                <div style="color: #856404; font-size: 14px;">
+                    <p style="margin: 0 0 5px 0;">Filtered out <strong>${filteredRows}</strong> rows with negative CBM or quantity values.</p>
+                    <p style="margin: 0; font-size: 12px;">Processing <strong>${filteredCount}</strong> valid rows for reports and dashboard.</p>
+                </div>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Auto-remove after 8 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 8000);
+        }
+    }
 }
 
 // Global function for download buttons
 function downloadReport(type) {
+    if (window.auth && !window.auth.canDownload()) {
+        if (window.misGenerator) {
+            window.misGenerator.showError('You do not have permission to download files. Contact administrator.');
+        }
+        return;
+    }
+    
     if (window.misGenerator) {
         window.misGenerator.downloadReport(type);
     } else {
@@ -462,5 +978,1010 @@ function downloadReport(type) {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-    window.misGenerator = new ExcelMISGenerator();
+    // Check authentication before initializing
+    if (window.auth && window.auth.isUserAuthenticated()) {
+        // Update UI based on user permissions
+        updateUIForUserPermissions();
+        
+        window.misGenerator = new ExcelMISGenerator();
+    } else {
+        // Redirect to login if not authenticated
+        window.location.href = 'login.html';
+    }
 });
+
+// Update UI based on user permissions
+function updateUIForUserPermissions() {
+    if (!window.auth || !window.auth.isUserAuthenticated()) return;
+    
+    const user = window.auth.getCurrentUser();
+    const accessLevelIndicator = document.getElementById('accessLevelIndicator');
+    
+    // Update access level indicator
+    if (accessLevelIndicator) {
+        const accessLevel = user.accessLevel === 'admin' ? 'Admin Access (Read/Write)' : 'User Access (Read-Only)';
+        const icon = user.accessLevel === 'admin' ? '🔓' : '🔒';
+        accessLevelIndicator.innerHTML = `${icon} ${accessLevel}`;
+        accessLevelIndicator.style.color = user.accessLevel === 'admin' ? '#4caf50' : '#ff9800';
+    }
+    
+    // Disable upload area for read-only users
+    if (!window.auth.canUpload()) {
+        const uploadArea = document.getElementById('uploadArea');
+        if (uploadArea) {
+            uploadArea.style.opacity = '0.6';
+            uploadArea.style.cursor = 'not-allowed';
+            uploadArea.title = 'Upload not available - Read-only access';
+        }
+        
+        const fileInput = document.getElementById('fileInput');
+        if (fileInput) {
+            fileInput.disabled = true;
+        }
+    }
+    
+    // Disable generate reports button for read-only users
+    if (!window.auth.canWrite()) {
+        const generateBtn = document.getElementById('generateReports');
+        if (generateBtn) {
+            generateBtn.disabled = true;
+            generateBtn.style.opacity = '0.6';
+            generateBtn.style.cursor = 'not-allowed';
+            generateBtn.title = 'Report generation not available - Read-only access';
+        }
+    }
+    
+    // Disable download buttons for read-only users
+    if (!window.auth.canDownload()) {
+        const downloadAllBtn = document.getElementById('downloadAll');
+        if (downloadAllBtn) {
+            downloadAllBtn.disabled = true;
+            downloadAllBtn.style.opacity = '0.6';
+            downloadAllBtn.style.cursor = 'not-allowed';
+            downloadAllBtn.title = 'Download not available - Read-only access';
+        }
+        
+        // Disable individual download buttons
+        const downloadBtns = document.querySelectorAll('.btn-download');
+        downloadBtns.forEach(btn => {
+            btn.disabled = true;
+            btn.style.opacity = '0.6';
+            btn.style.cursor = 'not-allowed';
+            btn.title = 'Download not available - Read-only access';
+        });
+    }
+}
+
+// Method to expose filtered data for LR Pending page
+function getFilteredData() {
+    if (window.excelMISGenerator) {
+        return window.excelMISGenerator.filteredData || [];
+    }
+    return [];
+}
+
+// Initialize LR Missing Dashboard
+function initializeLRMissingDashboard() {
+    // Hide all sections initially
+    const summarySection = document.getElementById('lrMissingSummarySection');
+    const tableSection = document.getElementById('lrMissingTableSection');
+    const selectedDateInfo = document.getElementById('selectedDateInfo');
+    
+    if (summarySection) summarySection.style.display = 'none';
+    if (tableSection) tableSection.style.display = 'none';
+    if (selectedDateInfo) selectedDateInfo.style.display = 'none';
+    
+    // Reset global variables
+    selectedDate = null;
+    selectedDateData = [];
+    filteredLRData = [];
+    currentCategory = 'all';
+    currentLRPage = 1;
+    
+    // Set up date picker
+    const datePicker = document.getElementById('lrDatePicker');
+    if (datePicker) {
+        const today = new Date().toISOString().split('T')[0];
+        datePicker.value = '';
+        datePicker.max = today;
+    }
+}
+
+// LR Missing functionality
+function showLRMissingSection() {
+    const lrMissingSection = document.getElementById('lrMissingSection');
+    if (lrMissingSection) {
+        lrMissingSection.style.display = 'block';
+    }
+    
+    // Initialize the dashboard properly
+    initializeLRMissingDashboard();
+}
+
+function updateLRMissingData(data) {
+    if (!data || data.length === 0) {
+        hideLRMissingData();
+        return;
+    }
+
+    // Filter for LR Missing records
+    const lrMissingData = data.filter(row => {
+        const lrNo = row['SHIPMENT Awb NUMBER'] || '';
+        return !lrNo || lrNo.toString().trim() === '';
+    });
+
+    console.log('LR Missing records found:', lrMissingData.length);
+
+    // Update summary counts
+    updateLRMissingSummary(lrMissingData);
+
+    // Group by day and display
+    displayLRMissingByDay(lrMissingData);
+
+    // Initialize filters
+    initializeLRMissingFilters(lrMissingData);
+}
+
+function updateLRMissingSummary(data) {
+    const totalCount = data.length;
+    const ecomCount = data.filter(row => {
+        const customerGroup = (row['Customer Group'] || '').toLowerCase();
+        return customerGroup.includes('amazon') || customerGroup.includes('flipkart');
+    }).length;
+    const quickcomCount = data.filter(row => {
+        const customerGroup = (row['Customer Group'] || '').toLowerCase();
+        return customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+               customerGroup.includes('zepto') || customerGroup.includes('swiggy');
+    }).length;
+    const offlineCount = totalCount - ecomCount - quickcomCount;
+
+    // Update stat cards
+    document.getElementById('totalLRMissingCount').textContent = totalCount.toLocaleString();
+    document.getElementById('ecomLRMissingCount').textContent = ecomCount.toLocaleString();
+    document.getElementById('quickcomLRMissingCount').textContent = quickcomCount.toLocaleString();
+    document.getElementById('offlineLRMissingCount').textContent = offlineCount.toLocaleString();
+
+    // Update filter dropdown options
+    updateFilterCounts(totalCount, ecomCount, quickcomCount, offlineCount);
+}
+
+function updateFilterCounts(total, ecom, quickcom, offline) {
+    const categoryFilter = document.getElementById('lrCategoryFilter');
+    if (categoryFilter) {
+        categoryFilter.innerHTML = `
+            <option value="all">All Categories (${total})</option>
+            <option value="ecom">E-commerce (${ecom})</option>
+            <option value="quickcom">Quick-commerce (${quickcom})</option>
+            <option value="offline">Offline (${offline})</option>
+        `;
+    }
+}
+
+// Global variables for LR Missing functionality
+let currentLRPage = 1;
+let lrRecordsPerPage = 50;
+let allLRMissingData = [];
+let selectedDate = null;
+let selectedDateData = [];
+let filteredLRData = [];
+let currentCategory = 'all';
+
+function displayLRMissingByDay(data) {
+    const container = document.getElementById('lrMissingByDay');
+    if (!container) return;
+
+    if (data.length === 0) {
+        container.innerHTML = '<div class="no-lr-missing">No LR Missing records found. All shipments have LR numbers.</div>';
+        return;
+    }
+
+    // Store all data globally for pagination
+    allLRMissingData = data.map(row => {
+        const customerGroup = (row['Customer Group'] || '').toLowerCase();
+        let category = 'offline';
+        
+        if (customerGroup.includes('amazon') || customerGroup.includes('flipkart')) {
+            category = 'ecom';
+        } else if (customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+                  customerGroup.includes('zepto') || customerGroup.includes('swiggy')) {
+            category = 'quickcom';
+        }
+
+        const quantity = getQuantityForLR(row);
+        let priority = 'low';
+        if (quantity >= 100) priority = 'high';
+        else if (quantity >= 10) priority = 'medium';
+
+        return {
+            ...row,
+            category,
+            priority
+        };
+    });
+
+    // Sort by date (newest first), then by priority, then by quantity
+    allLRMissingData.sort((a, b) => {
+        const dateA = new Date(a['SALES Invoice DATE'] || '');
+        const dateB = new Date(b['SALES Invoice DATE'] || '');
+        
+        if (dateA.getTime() !== dateB.getTime()) {
+            return dateB.getTime() - dateA.getTime();
+        }
+        
+        const priorityOrder = { high: 3, medium: 2, low: 1 };
+        const aPriority = priorityOrder[a.priority] || 0;
+        const bPriority = priorityOrder[b.priority] || 0;
+        
+        if (aPriority !== bPriority) {
+            return bPriority - aPriority;
+        }
+        
+        return getQuantityForLR(b) - getQuantityForLR(a);
+    });
+
+    // Don't auto-display - wait for date selection
+    // displayLRMissingPage();
+}
+
+function displayLRMissingPage() {
+    const container = document.getElementById('lrMissingByDay');
+    if (!container) return;
+
+    const startIndex = (currentLRPage - 1) * lrRecordsPerPage;
+    const endIndex = startIndex + lrRecordsPerPage;
+    const pageData = allLRMissingData.slice(startIndex, endIndex);
+    
+    const totalPages = Math.ceil(allLRMissingData.length / lrRecordsPerPage);
+
+    // Generate table HTML
+    const tableHTML = `
+        <div class="table-container">
+            <div class="table-header">
+                <div class="table-info">
+                    Showing ${startIndex + 1}-${Math.min(endIndex, allLRMissingData.length)} of ${allLRMissingData.length} records
+                </div>
+                <div class="table-actions">
+                    <select id="lrRecordsPerPage" onchange="changeLRRecordsPerPage()">
+                        <option value="25" ${lrRecordsPerPage === 25 ? 'selected' : ''}>25 per page</option>
+                        <option value="50" ${lrRecordsPerPage === 50 ? 'selected' : ''}>50 per page</option>
+                        <option value="100" ${lrRecordsPerPage === 100 ? 'selected' : ''}>100 per page</option>
+                        <option value="200" ${lrRecordsPerPage === 200 ? 'selected' : ''}>200 per page</option>
+                    </select>
+                </div>
+            </div>
+            <table class="lr-missing-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Invoice No</th>
+                        <th>Customer</th>
+                        <th>Customer Group</th>
+                        <th>Quantity</th>
+                        <th>CBM</th>
+                        <th>Priority</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${pageData.map(row => `
+                        <tr>
+                            <td>${formatDateForExport(row['SALES Invoice DATE'] || '')}</td>
+                            <td>
+                                <span class="category-badge category-${row.category}">
+                                    ${row.category === 'ecom' ? 'E-commerce' : 
+                                      row.category === 'quickcom' ? 'Quick-commerce' : 'Offline'}
+                                </span>
+                            </td>
+                            <td>${row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A'}</td>
+                            <td>${row['Customer'] || 'N/A'}</td>
+                            <td>${row['Customer Group'] || 'N/A'}</td>
+                            <td class="priority-${row.priority}">${getQuantityForLR(row).toLocaleString()}</td>
+                            <td>${parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2)}</td>
+                            <td>
+                                <span class="priority-${row.priority}">
+                                    ${row.priority.charAt(0).toUpperCase() + row.priority.slice(1)}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="status-pending">Missing</span>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            <div class="pagination">
+                <button onclick="previousLRPage()" ${currentLRPage === 1 ? 'disabled' : ''}>Previous</button>
+                <span class="page-info">Page ${currentLRPage} of ${totalPages}</span>
+                <button onclick="nextLRPage()" ${currentLRPage === totalPages ? 'disabled' : ''}>Next</button>
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = tableHTML;
+}
+
+// New function to display filtered data
+function displayFilteredData() {
+    const container = document.getElementById('lrMissingByDay');
+    const recordCount = document.getElementById('recordCount');
+    
+    if (!container) return;
+    
+    if (filteredLRData.length === 0) {
+        container.innerHTML = '<div class="no-lr-missing">No LR Missing records found for the selected criteria.</div>';
+        recordCount.textContent = '0 records';
+        return;
+    }
+
+    // Reset pagination for filtered data
+    currentLRPage = 1;
+    
+    // Update record count
+    recordCount.textContent = `${filteredLRData.length} records`;
+    
+    // Display paginated filtered data
+    displayFilteredPage();
+}
+
+// Updated function to display paginated filtered data
+function displayFilteredPage() {
+    const container = document.getElementById('lrMissingByDay');
+    if (!container) return;
+
+    const startIndex = (currentLRPage - 1) * lrRecordsPerPage;
+    const endIndex = startIndex + lrRecordsPerPage;
+    const pageData = filteredLRData.slice(startIndex, endIndex);
+    
+    const totalPages = Math.ceil(filteredLRData.length / lrRecordsPerPage);
+
+    // Generate table HTML
+    const tableHTML = `
+        <div class="table-container">
+            <div class="table-header">
+                <div class="table-info">
+                    Showing ${startIndex + 1}-${Math.min(endIndex, filteredLRData.length)} of ${filteredLRData.length} records
+                </div>
+                <div class="table-actions">
+                    <select id="lrRecordsPerPage" onchange="changeLRRecordsPerPage()">
+                        <option value="25" ${lrRecordsPerPage === 25 ? 'selected' : ''}>25 per page</option>
+                        <option value="50" ${lrRecordsPerPage === 50 ? 'selected' : ''}>50 per page</option>
+                        <option value="100" ${lrRecordsPerPage === 100 ? 'selected' : ''}>100 per page</option>
+                        <option value="200" ${lrRecordsPerPage === 200 ? 'selected' : ''}>200 per page</option>
+                    </select>
+                </div>
+            </div>
+            <div class="lr-missing-content">
+                <table class="lr-missing-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Invoice No</th>
+                            <th>Customer</th>
+                            <th>Customer Group</th>
+                            <th>Category</th>
+                            <th>Quantity</th>
+                            <th>CBM</th>
+                            <th>Transporter</th>
+                            <th>Vehicle No</th>
+                            <th>Pickup Date</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${pageData.map(row => `
+                            <tr>
+                                <td>${formatDateForExport(row['SALES Invoice DATE'] || '')}</td>
+                                <td>${row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A'}</td>
+                                <td>${row['Customer'] || 'N/A'}</td>
+                                <td>${row['Customer Group'] || 'N/A'}</td>
+                                <td><span class="category-badge category-${row.category}">${row.category.toUpperCase()}</span></td>
+                                <td class="priority-${row.priority}">${getQuantityForLR(row).toLocaleString()}</td>
+                                <td>${parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2)}</td>
+                                <td>${row['Transporter'] || 'Not Assigned'}</td>
+                                <td>${row['SHIPMENT Vehicle NO'] || 'N/A'}</td>
+                                <td>${formatDateForExport(row['SHIPMENT Pickup DATE'] || '')}</td>
+                                <td><span class="priority-${row.priority}">${row.priority.toUpperCase()}</span></td>
+                                <td><span class="status-pending">LR Missing</span></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            ${totalPages > 1 ? `
+                <div class="pagination">
+                    <button onclick="previousLRPage()" ${currentLRPage === 1 ? 'disabled' : ''}>← Previous</button>
+                    <span class="page-info">Page ${currentLRPage} of ${totalPages}</span>
+                    <button onclick="nextLRPage()" ${currentLRPage === totalPages ? 'disabled' : ''}>Next →</button>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    container.innerHTML = tableHTML;
+}
+
+function changeLRRecordsPerPage() {
+    const select = document.getElementById('lrRecordsPerPage');
+    lrRecordsPerPage = parseInt(select.value);
+    currentLRPage = 1;
+    
+    // Use filtered data if available, otherwise use original display
+    if (filteredLRData.length > 0) {
+        displayFilteredPage();
+    } else {
+        displayLRMissingPage();
+    }
+}
+
+function previousLRPage() {
+    if (currentLRPage > 1) {
+        currentLRPage--;
+        // Use filtered data if available
+        if (filteredLRData.length > 0) {
+            displayFilteredPage();
+        } else {
+            displayLRMissingPage();
+        }
+    }
+}
+
+function nextLRPage() {
+    const dataLength = filteredLRData.length > 0 ? filteredLRData.length : allLRMissingData.length;
+    const totalPages = Math.ceil(dataLength / lrRecordsPerPage);
+    if (currentLRPage < totalPages) {
+        currentLRPage++;
+        // Use filtered data if available
+        if (filteredLRData.length > 0) {
+            displayFilteredPage();
+        } else {
+            displayLRMissingPage();
+        }
+    }
+}
+
+function getQuantityForLR(row) {
+    if (!row || typeof row !== 'object') return 0;
+
+    try {
+        let qty = row['SALES Invoice QTY'];
+        
+        if (!qty || qty === 0 || qty === '0') {
+            qty = row['DELIVERY Note QTY'];
+        }
+        
+        if (qty === null || qty === undefined) return 0;
+        
+        if (typeof qty === 'string') {
+            qty = qty.replace(/[^\d.-]/g, '');
+            if (qty === '' || qty === '-') return 0;
+        }
+        
+        const numQty = parseFloat(qty);
+        return isNaN(numQty) ? 0 : Math.max(0, numQty);
+    } catch (error) {
+        return 0;
+    }
+}
+
+function formatDateForGrouping(dateStr) {
+    if (!dateStr) return 'Unknown Date';
+    
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return 'Invalid Date';
+        
+        return date.toISOString().split('T')[0]; // YYYY-MM-DD format
+    } catch (error) {
+        return 'Invalid Date';
+    }
+}
+
+function initializeLRMissingFilters(data) {
+    // Category filter
+    const categoryFilter = document.getElementById('lrCategoryFilter');
+    if (categoryFilter) {
+        categoryFilter.addEventListener('change', () => {
+            if (selectedDate) {
+                filterSelectedDateData();
+            } else {
+                filterLRMissingData(data);
+            }
+        });
+    }
+
+    // Date filter
+    const dateFilter = document.getElementById('lrDateFilter');
+    if (dateFilter) {
+        dateFilter.addEventListener('change', () => {
+            if (selectedDate) {
+                filterSelectedDateData();
+            } else {
+                filterLRMissingData(data);
+            }
+        });
+    }
+
+    // Search filter
+    const searchInput = document.getElementById('lrSearchInput');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => {
+            if (selectedDate) {
+                filterSelectedDateData();
+            } else {
+                filterLRMissingData(data);
+            }
+        });
+    }
+
+    // Initialize date picker without auto-selecting date
+    const datePicker = document.getElementById('lrDatePicker');
+    if (datePicker) {
+        const today = new Date().toISOString().split('T')[0];
+        datePicker.value = ''; // Don't auto-select today
+        datePicker.max = today; // Set max date to today
+        // Don't call filterBySelectedDate() automatically
+    }
+}
+
+function filterBySelectedDate() {
+    const datePicker = document.getElementById('lrDatePicker');
+    const selectedDateInfo = document.getElementById('selectedDateInfo');
+    const summarySection = document.getElementById('lrMissingSummarySection');
+    const tableSection = document.getElementById('lrMissingTableSection');
+    
+    if (!datePicker || !datePicker.value) {
+        selectedDate = null;
+        selectedDateData = [];
+        selectedDateInfo.style.display = 'none';
+        summarySection.style.display = 'none';
+        tableSection.style.display = 'none';
+        return;
+    }
+
+    selectedDate = datePicker.value;
+    
+    // Filter data for selected date
+    selectedDateData = allLRMissingData.filter(row => {
+        const invoiceDate = row['SALES Invoice DATE'] || '';
+        const dateStr = formatDateForGrouping(invoiceDate);
+        return dateStr === selectedDate;
+    });
+
+    // Update selected date info
+    const dateObj = new Date(selectedDate);
+    const formattedDate = dateObj.toLocaleDateString('en-GB', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+
+    document.getElementById('selectedDateText').textContent = formattedDate;
+    document.getElementById('selectedDateCount').textContent = `${selectedDateData.length} records`;
+    
+    // Show sections
+    selectedDateInfo.style.display = 'block';
+    
+    if (selectedDateData.length > 0) {
+        summarySection.style.display = 'block';
+        tableSection.style.display = 'block';
+        
+        // Update summary for selected date data only
+        updateLRMissingSummary(selectedDateData);
+        
+        // Reset category filter and display data
+        currentCategory = 'all';
+        const categoryFilter = document.getElementById('lrCategoryFilter');
+        if (categoryFilter) {
+            categoryFilter.value = 'all';
+        }
+        
+        // Set filtered data and display immediately
+        filteredLRData = selectedDateData;
+        displayFilteredData();
+    } else {
+        summarySection.style.display = 'none';
+        tableSection.style.display = 'none';
+        
+        // Update record count to show 0 when no data
+        const recordCount = document.getElementById('recordCount');
+        if (recordCount) {
+            recordCount.textContent = '0 records';
+        }
+    }
+}
+
+function filterSelectedDateData() {
+    if (!selectedDate || selectedDateData.length === 0) {
+        filteredLRData = [];
+        displayFilteredData();
+        return;
+    }
+
+    // Apply category filter
+    if (currentCategory === 'all') {
+        filteredLRData = selectedDateData;
+    } else {
+        filteredLRData = selectedDateData.filter(row => row.category === currentCategory);
+    }
+    
+    // Apply search filter if search input exists
+    const searchInput = document.getElementById('lrSearchInput');
+    if (searchInput && searchInput.value.trim()) {
+        const searchTerm = searchInput.value.toLowerCase().trim();
+        filteredLRData = filteredLRData.filter(row => {
+            return Object.values(row).some(value => 
+                value && value.toString().toLowerCase().includes(searchTerm)
+            );
+        });
+    }
+    
+    displayFilteredData();
+}
+
+// New function to filter by category
+function filterByCategory() {
+    const categoryFilter = document.getElementById('lrCategoryFilter');
+    if (!categoryFilter) return;
+    
+    currentCategory = categoryFilter.value;
+    currentLRPage = 1;
+    
+    // Apply category filter to selected date data
+    if (selectedDateData.length > 0) {
+        filterSelectedDateData();
+    }
+}
+
+function filterLRMissingData(data) {
+    const categoryFilter = document.getElementById('lrCategoryFilter')?.value || 'all';
+    const dateFilter = document.getElementById('lrDateFilter')?.value || 'all';
+    const searchTerm = document.getElementById('lrSearchInput')?.value.toLowerCase() || '';
+
+    let filteredData = data.filter(row => {
+        // Category filter
+        if (categoryFilter !== 'all') {
+            const customerGroup = (row['Customer Group'] || '').toLowerCase();
+            let rowCategory = 'offline';
+            
+            if (customerGroup.includes('amazon') || customerGroup.includes('flipkart')) {
+                rowCategory = 'ecom';
+            } else if (customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+                      customerGroup.includes('zepto') || customerGroup.includes('swiggy')) {
+                rowCategory = 'quickcom';
+            }
+            
+            if (rowCategory !== categoryFilter) return false;
+        }
+
+        // Date filter
+        if (dateFilter !== 'all') {
+            const invoiceDate = new Date(row['SALES Invoice DATE'] || '');
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            
+            let shouldInclude = false;
+            switch (dateFilter) {
+                case 'today':
+                    shouldInclude = invoiceDate.toDateString() === today.toDateString();
+                    break;
+                case 'yesterday':
+                    shouldInclude = invoiceDate.toDateString() === yesterday.toDateString();
+                    break;
+                case 'week':
+                    const weekAgo = new Date(today);
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    shouldInclude = invoiceDate >= weekAgo;
+                    break;
+                case 'month':
+                    const monthAgo = new Date(today);
+                    monthAgo.setMonth(monthAgo.getMonth() - 1);
+                    shouldInclude = invoiceDate >= monthAgo;
+                    break;
+            }
+            
+            if (!shouldInclude) return false;
+        }
+
+        // Search filter
+        if (searchTerm) {
+            const searchFields = [
+                row['SALES Invoice NO'] || '',
+                row['DELIVERY Note NO'] || '',
+                row['Customer'] || '',
+                row['Customer Group'] || ''
+            ];
+            
+            const searchText = searchFields.join(' ').toLowerCase();
+            if (!searchText.includes(searchTerm)) return false;
+        }
+
+        return true;
+    });
+
+    // Update the global data and reset pagination
+    allLRMissingData = filteredData;
+    currentLRPage = 1;
+    displayLRMissingPage();
+}
+
+function hideLRMissingData() {
+    const container = document.getElementById('lrMissingByDay');
+    if (container) {
+        container.innerHTML = '<div class="no-lr-missing">No data available. Please upload and process an Excel file first.</div>';
+    }
+
+    // Reset summary counts
+    document.getElementById('totalLRMissingCount').textContent = '0';
+    document.getElementById('ecomLRMissingCount').textContent = '0';
+    document.getElementById('quickcomLRMissingCount').textContent = '0';
+    document.getElementById('offlineLRMissingCount').textContent = '0';
+}
+
+function refreshLRMissing() {
+    if (window.excelMISGenerator && window.excelMISGenerator.filteredData) {
+        updateLRMissingData(window.excelMISGenerator.filteredData);
+    } else {
+        hideLRMissingData();
+    }
+}
+
+function exportLRMissingToExcel() {
+    if (!window.auth || !window.auth.canDownload()) {
+        alert('You do not have permission to download files. Contact administrator.');
+        return;
+    }
+
+    if (allLRMissingData.length === 0) {
+        alert('No LR Missing records found to export.');
+        return;
+    }
+
+    try {
+        // Show loading message
+        const exportBtn = document.getElementById('exportLRMissing');
+        const originalText = exportBtn.textContent;
+        exportBtn.textContent = '📊 Exporting...';
+        exportBtn.disabled = true;
+
+        // Use setTimeout to allow UI to update
+        setTimeout(() => {
+            try {
+                // Prepare data for export (use all data, not just current page)
+                const exportData = allLRMissingData.map(row => {
+                    const customerGroup = (row['Customer Group'] || '').toLowerCase();
+                    let category = 'Offline';
+                    if (customerGroup.includes('amazon') || customerGroup.includes('flipkart')) {
+                        category = 'E-commerce';
+                    } else if (customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+                              customerGroup.includes('zepto') || customerGroup.includes('swiggy')) {
+                        category = 'Quick-commerce';
+                    }
+
+                    const quantity = getQuantityForLR(row);
+                    let priority = 'Low';
+                    if (quantity >= 100) priority = 'High';
+                    else if (quantity >= 10) priority = 'Medium';
+
+                    return {
+                        'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
+                        'Category': category,
+                        'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
+                        'Customer': row['Customer'] || 'N/A',
+                        'Customer Group': row['Customer Group'] || 'N/A',
+                        'Quantity': quantity,
+                        'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
+                        'Priority': priority,
+                        'Status': 'LR Missing',
+                        'Transporter': row['Transporter'] || 'N/A',
+                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A'
+                    };
+                });
+
+                // Create workbook
+                const ws = XLSX.utils.json_to_sheet(exportData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'LR Missing Report');
+
+                // Generate filename
+                const today = new Date().toISOString().split('T')[0];
+                const filename = `LR_Missing_Report_${today}.xlsx`;
+
+                // Download file
+                XLSX.writeFile(wb, filename);
+                
+                alert(`LR Missing report exported successfully as ${filename} (${exportData.length} records)`);
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Error exporting data: ' + error.message);
+            } finally {
+                // Reset button
+                exportBtn.textContent = originalText;
+                exportBtn.disabled = false;
+            }
+        }, 100);
+
+    } catch (error) {
+        console.error('Export error:', error);
+        alert('Error exporting data: ' + error.message);
+    }
+}
+
+function exportSelectedDateLRMissing() {
+    if (!window.auth || !window.auth.canDownload()) {
+        alert('You do not have permission to download files. Contact administrator.');
+        return;
+    }
+
+    if (!selectedDate || selectedDateData.length === 0) {
+        alert('No data available for the selected date. Please select a date with LR missing records.');
+        return;
+    }
+
+    try {
+        // Show loading message
+        const exportBtn = document.getElementById('exportSelectedDate');
+        const originalText = exportBtn.textContent;
+        exportBtn.textContent = '📅 Exporting...';
+        exportBtn.disabled = true;
+
+        // Use setTimeout to allow UI to update
+        setTimeout(() => {
+            try {
+                // Prepare data for export (use selected date data)
+                const exportData = selectedDateData.map(row => {
+                    const customerGroup = (row['Customer Group'] || '').toLowerCase();
+                    let category = 'Offline';
+                    if (customerGroup.includes('amazon') || customerGroup.includes('flipkart')) {
+                        category = 'E-commerce';
+                    } else if (customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+                              customerGroup.includes('zepto') || customerGroup.includes('swiggy')) {
+                        category = 'Quick-commerce';
+                    }
+
+                    const quantity = getQuantityForLR(row);
+                    let priority = 'Low';
+                    if (quantity >= 100) priority = 'High';
+                    else if (quantity >= 10) priority = 'Medium';
+
+                    return {
+                        'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
+                        'Category': category,
+                        'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
+                        'Customer': row['Customer'] || 'N/A',
+                        'Customer Group': row['Customer Group'] || 'N/A',
+                        'Quantity': quantity,
+                        'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
+                        'Priority': priority,
+                        'Status': 'LR Missing',
+                        'Transporter': row['Transporter'] || 'N/A',
+                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A'
+                    };
+                });
+
+                // Create workbook
+                const ws = XLSX.utils.json_to_sheet(exportData);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'LR Missing Report');
+
+                // Generate filename with selected date
+                const dateStr = selectedDate.replace(/-/g, '');
+                const filename = `LR_Missing_${dateStr}.xlsx`;
+
+                // Download file
+                XLSX.writeFile(wb, filename);
+                
+                alert(`LR Missing report for ${formatDateForExport(selectedDate)} exported successfully as ${filename} (${exportData.length} records)`);
+            } catch (error) {
+                console.error('Export error:', error);
+                alert('Error exporting data: ' + error.message);
+            } finally {
+                // Reset button
+                exportBtn.textContent = originalText;
+                exportBtn.disabled = false;
+            }
+        }, 100);
+
+    } catch (error) {
+        console.error('Export error:', error);
+        alert('Error exporting data: ' + error.message);
+    }
+}
+
+function formatDateForExport(dateStr) {
+    if (!dateStr) return 'N/A';
+    
+    try {
+        const date = new Date(dateStr);
+        if (isNaN(date.getTime())) return dateStr;
+        
+        return date.toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        });
+    } catch (error) {
+        return dateStr;
+    }
+}
+
+// New function to download filtered LR Missing data
+function downloadLRMissingExcel() {
+    if (!filteredLRData || filteredLRData.length === 0) {
+        alert('No data available to export. Please select a date first.');
+        return;
+    }
+
+    const downloadBtn = document.getElementById('downloadLRMissing');
+    if (downloadBtn) {
+        downloadBtn.textContent = '📥 Exporting...';
+        downloadBtn.disabled = true;
+    }
+
+    try {
+        // Prepare data for export
+        const exportData = filteredLRData.map(row => {
+            const quantity = getQuantityForLR(row);
+
+            return {
+                'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
+                'Category': row.category.charAt(0).toUpperCase() + row.category.slice(1),
+                'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
+                'Customer': row['Customer'] || 'N/A',
+                'Customer Group': row['Customer Group'] || 'N/A',
+                'Quantity': quantity,
+                'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
+                'Priority': row.priority.charAt(0).toUpperCase() + row.priority.slice(1),
+                'Status': 'LR Missing',
+                'Transporter': row['Transporter'] || 'N/A',
+                'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A',
+                'Pickup Date': formatDateForExport(row['SHIPMENT Pickup DATE'] || ''),
+                'Delivery Date': formatDateForExport(row['DELIVERED Date'] || '')
+            };
+        });
+
+        // Create workbook
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'LR Missing Report');
+
+        // Auto-size columns
+        const colWidths = [
+            { width: 12 }, // Date
+            { width: 15 }, // Category
+            { width: 20 }, // Invoice No
+            { width: 25 }, // Customer
+            { width: 20 }, // Customer Group
+            { width: 10 }, // Quantity
+            { width: 8 },  // CBM
+            { width: 10 }, // Priority
+            { width: 12 }, // Status
+            { width: 20 }, // Transporter
+            { width: 15 }, // Vehicle No
+            { width: 12 }, // Pickup Date
+            { width: 12 }  // Delivery Date
+        ];
+        ws['!cols'] = colWidths;
+
+        // Generate filename
+        const selectedDateFormatted = selectedDate ? selectedDate.replace(/-/g, '_') : new Date().toISOString().split('T')[0].replace(/-/g, '_');
+        const categoryText = currentCategory === 'all' ? 'All_Categories' : currentCategory.charAt(0).toUpperCase() + currentCategory.slice(1);
+        const filename = `LR_Missing_Report_${selectedDateFormatted}_${categoryText}.xlsx`;
+
+        // Download file
+        XLSX.writeFile(wb, filename);
+        
+        alert(`LR Missing report exported successfully!\n\nFile: ${filename}\nRecords: ${exportData.length}\nDate: ${selectedDate || 'All dates'}\nCategory: ${categoryText}`);
+    } catch (error) {
+        console.error('Export error:', error);
+        alert('Error exporting data: ' + error.message);
+    } finally {
+        if (downloadBtn) {
+            downloadBtn.textContent = '📥 Download LR Missing Report';
+            downloadBtn.disabled = false;
+        }
+    }
+}
