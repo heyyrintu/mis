@@ -326,9 +326,20 @@ class ExcelMISGenerator {
             // Validate data integrity for large files
             this.validateDataIntegrity(dataObjects, filteredData);
 
-            // Show LR Missing section
+            // Show LR Missing section and update data
             showLRMissingSection();
             updateLRMissingData(filteredData);
+            
+            // Debug: Log LR counts for comparison
+            const dashboardStats = window.dashboard ? window.dashboard.calculateStats(filteredData) : null;
+            const lrMissingCount = filteredData.filter(row => {
+                const lrNo = row['SHIPMENT Awb NUMBER'] || '';
+                return !lrNo || lrNo.toString().trim() === '';
+            }).length;
+            
+            console.log('Dashboard LR Pending:', dashboardStats ? dashboardStats.lrPending : 'N/A');
+            console.log('LR Missing Section Count:', lrMissingCount);
+            console.log('Data consistency check:', dashboardStats ? (dashboardStats.lrPending === lrMissingCount) : 'N/A');
 
         } catch (error) {
             this.showError('Error generating reports: ' + error.message);
@@ -1111,12 +1122,82 @@ function updateLRMissingData(data) {
     });
 
     console.log('LR Missing records found:', lrMissingData.length);
+    
+    // Ensure dashboard is also updated with the same data
+    if (window.dashboard) {
+        const dashboardStats = window.dashboard.calculateStats(data);
+        console.log('Dashboard LR Pending count:', dashboardStats.lrPending);
+        console.log('Counts match:', dashboardStats.lrPending === lrMissingData.length);
+    }
 
-    // Update summary counts
+    // Update summary counts immediately
     updateLRMissingSummary(lrMissingData);
 
-    // Group by day and display
-    displayLRMissingByDay(lrMissingData);
+    // Store all LR missing data globally
+    allLRMissingData = lrMissingData.map(row => {
+        const customerGroup = (row['Customer Group'] || '').toLowerCase();
+        let category = 'offline';
+        
+        if (customerGroup.includes('amazon') || customerGroup.includes('flipkart')) {
+            category = 'ecom';
+        } else if (customerGroup.includes('bigbasket') || customerGroup.includes('blinkit') || 
+                  customerGroup.includes('zepto') || customerGroup.includes('swiggy')) {
+            category = 'quickcom';
+        }
+
+        const quantity = getQuantityForLR(row);
+        let priority = 'low';
+        if (quantity >= 100) priority = 'high';
+        else if (quantity >= 10) priority = 'medium';
+
+        return {
+            ...row,
+            category,
+            priority
+        };
+    });
+
+    // Sort by date (newest first), then by priority, then by quantity
+    allLRMissingData.sort((a, b) => {
+        const dateA = new Date(a['SALES Invoice DATE'] || '');
+        const dateB = new Date(b['SALES Invoice DATE'] || '');
+        
+        if (dateA.getTime() !== dateB.getTime()) {
+            return dateB.getTime() - dateA.getTime();
+        }
+        
+        const priorityOrder = { high: 3, medium: 2, low: 1 };
+        const aPriority = priorityOrder[a.priority] || 0;
+        const bPriority = priorityOrder[b.priority] || 0;
+        
+        if (aPriority !== bPriority) {
+            return bPriority - aPriority;
+        }
+        
+        return getQuantityForLR(b) - getQuantityForLR(a);
+    });
+
+    // Don't show summary section immediately - only after date selection
+    // Just store the data for later use
+    if (lrMissingData.length > 0) {
+        // Set filtered data to all data initially (but don't display yet)
+        filteredLRData = allLRMissingData;
+        
+        // Hide sections initially
+        const summarySection = document.getElementById('lrMissingSummarySection');
+        const tableSection = document.getElementById('lrMissingTableSection');
+        const recordCount = document.getElementById('recordCount');
+        
+        if (summarySection) summarySection.style.display = 'none';
+        if (tableSection) tableSection.style.display = 'none';
+        
+        // Update the header record count but keep sections hidden
+        if (recordCount) {
+            recordCount.textContent = `${lrMissingData.length} records`;
+        }
+    } else {
+        displayLRMissingByDay(lrMissingData);
+    }
 
     // Initialize filters
     initializeLRMissingFilters(lrMissingData);
@@ -1249,52 +1330,45 @@ function displayLRMissingPage() {
                     </select>
                 </div>
             </div>
-            <table class="lr-missing-table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>Category</th>
-                        <th>Invoice No</th>
-                        <th>Customer</th>
-                        <th>Customer Group</th>
-                        <th>Quantity</th>
-                        <th>CBM</th>
-                        <th>Priority</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
+            <div class="lr-missing-content">
+                <table class="lr-missing-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Invoice No</th>
+                            <th>Customer</th>
+                            <th>Customer Group</th>
+                            <th>SKU</th>
+                            <th>Quantity</th>
+                            <th>Transporter</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
                 <tbody>
                     ${pageData.map(row => `
                         <tr>
                             <td>${formatDateForExport(row['SALES Invoice DATE'] || '')}</td>
-                            <td>
-                                <span class="category-badge category-${row.category}">
-                                    ${row.category === 'ecom' ? 'E-commerce' : 
-                                      row.category === 'quickcom' ? 'Quick-commerce' : 'Offline'}
-                                </span>
-                            </td>
                             <td>${row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A'}</td>
                             <td>${row['Customer'] || 'N/A'}</td>
                             <td>${row['Customer Group'] || 'N/A'}</td>
+                            <td>${row['SO Item'] || row['Description of Content'] || 'N/A'}</td>
                             <td class="priority-${row.priority}">${getQuantityForLR(row).toLocaleString()}</td>
-                            <td>${parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2)}</td>
-                            <td>
-                                <span class="priority-${row.priority}">
-                                    ${row.priority.charAt(0).toUpperCase() + row.priority.slice(1)}
-                                </span>
-                            </td>
-                            <td>
-                                <span class="status-pending">Missing</span>
-                            </td>
+                            <td>${row['Transporter'] || 'Not Assigned'}</td>
+                            <td><span class="priority-${row.priority}">${row.priority.toUpperCase()}</span></td>
+                            <td><span class="status-pending">LR Missing</span></td>
                         </tr>
                     `).join('')}
                 </tbody>
             </table>
-            <div class="pagination">
-                <button onclick="previousLRPage()" ${currentLRPage === 1 ? 'disabled' : ''}>Previous</button>
-                <span class="page-info">Page ${currentLRPage} of ${totalPages}</span>
-                <button onclick="nextLRPage()" ${currentLRPage === totalPages ? 'disabled' : ''}>Next</button>
             </div>
+            ${totalPages > 1 ? `
+                <div class="pagination">
+                    <button onclick="previousLRPage()" ${currentLRPage === 1 ? 'disabled' : ''}>← Previous</button>
+                    <span class="page-info">Page ${currentLRPage} of ${totalPages}</span>
+                    <button onclick="nextLRPage()" ${currentLRPage === totalPages ? 'disabled' : ''}>Next →</button>
+                </div>
+            ` : ''}
         </div>
     `;
 
@@ -1359,12 +1433,9 @@ function displayFilteredPage() {
                             <th>Invoice No</th>
                             <th>Customer</th>
                             <th>Customer Group</th>
-                            <th>Category</th>
+                            <th>SKU</th>
                             <th>Quantity</th>
-                            <th>CBM</th>
                             <th>Transporter</th>
-                            <th>Vehicle No</th>
-                            <th>Pickup Date</th>
                             <th>Priority</th>
                             <th>Status</th>
                         </tr>
@@ -1376,12 +1447,9 @@ function displayFilteredPage() {
                                 <td>${row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A'}</td>
                                 <td>${row['Customer'] || 'N/A'}</td>
                                 <td>${row['Customer Group'] || 'N/A'}</td>
-                                <td><span class="category-badge category-${row.category}">${row.category.toUpperCase()}</span></td>
+                                <td>${row['SO Item'] || row['Description of Content'] || 'N/A'}</td>
                                 <td class="priority-${row.priority}">${getQuantityForLR(row).toLocaleString()}</td>
-                                <td>${parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2)}</td>
                                 <td>${row['Transporter'] || 'Not Assigned'}</td>
-                                <td>${row['SHIPMENT Vehicle NO'] || 'N/A'}</td>
-                                <td>${formatDateForExport(row['SHIPMENT Pickup DATE'] || '')}</td>
                                 <td><span class="priority-${row.priority}">${row.priority.toUpperCase()}</span></td>
                                 <td><span class="status-pending">LR Missing</span></td>
                             </tr>
@@ -1768,16 +1836,21 @@ function exportLRMissingToExcel() {
 
                     return {
                         'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
-                        'Category': category,
                         'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
                         'Customer': row['Customer'] || 'N/A',
                         'Customer Group': row['Customer Group'] || 'N/A',
+                        'Category': category,
+                        'SKU': row['SO Item'] || row['Description of Content'] || 'N/A',
                         'Quantity': quantity,
                         'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
-                        'Priority': priority,
-                        'Status': 'LR Missing',
+                        'Per Unit CBM': parseFloat(row['Per Unit CBM'] || 0).toFixed(2),
                         'Transporter': row['Transporter'] || 'N/A',
-                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A'
+                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A',
+                        'Pickup Date': formatDateForExport(row['SHIPMENT Pickup DATE'] || ''),
+                        'Delivered Date': formatDateForExport(row['DELIVERED Date'] || ''),
+                        'Sales Order No': row['Sales Order No'] || 'N/A',
+                        'Priority': priority,
+                        'Status': 'LR Missing'
                     };
                 });
 
@@ -1849,16 +1922,21 @@ function exportSelectedDateLRMissing() {
 
                     return {
                         'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
-                        'Category': category,
                         'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
                         'Customer': row['Customer'] || 'N/A',
                         'Customer Group': row['Customer Group'] || 'N/A',
+                        'Category': category,
+                        'SKU': row['SO Item'] || row['Description of Content'] || 'N/A',
                         'Quantity': quantity,
                         'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
-                        'Priority': priority,
-                        'Status': 'LR Missing',
+                        'Per Unit CBM': parseFloat(row['Per Unit CBM'] || 0).toFixed(2),
                         'Transporter': row['Transporter'] || 'N/A',
-                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A'
+                        'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A',
+                        'Pickup Date': formatDateForExport(row['SHIPMENT Pickup DATE'] || ''),
+                        'Delivered Date': formatDateForExport(row['DELIVERED Date'] || ''),
+                        'Sales Order No': row['Sales Order No'] || 'N/A',
+                        'Priority': priority,
+                        'Status': 'LR Missing'
                     };
                 });
 
@@ -1928,18 +2006,21 @@ function downloadLRMissingExcel() {
 
             return {
                 'Date': formatDateForExport(row['SALES Invoice DATE'] || ''),
-                'Category': row.category.charAt(0).toUpperCase() + row.category.slice(1),
                 'Invoice No': row['SALES Invoice NO'] || row['DELIVERY Note NO'] || 'N/A',
                 'Customer': row['Customer'] || 'N/A',
                 'Customer Group': row['Customer Group'] || 'N/A',
+                'Category': row.category.charAt(0).toUpperCase() + row.category.slice(1),
+                'SKU': row['SO Item'] || row['Description of Content'] || 'N/A',
                 'Quantity': quantity,
                 'CBM': parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0).toFixed(2),
-                'Priority': row.priority.charAt(0).toUpperCase() + row.priority.slice(1),
-                'Status': 'LR Missing',
+                'Per Unit CBM': parseFloat(row['Per Unit CBM'] || 0).toFixed(2),
                 'Transporter': row['Transporter'] || 'N/A',
                 'Vehicle No': row['SHIPMENT Vehicle NO'] || 'N/A',
                 'Pickup Date': formatDateForExport(row['SHIPMENT Pickup DATE'] || ''),
-                'Delivery Date': formatDateForExport(row['DELIVERED Date'] || '')
+                'Delivered Date': formatDateForExport(row['DELIVERED Date'] || ''),
+                'Sales Order No': row['Sales Order No'] || 'N/A',
+                'Priority': row.priority.charAt(0).toUpperCase() + row.priority.slice(1),
+                'Status': 'LR Missing'
             };
         });
 
