@@ -4,7 +4,39 @@ class ExcelMISGenerator {
         this.ecomData = [];
         this.quickcomData = [];
         this.offlineData = [];
+        
+        // Performance optimizations
+        this.cache = new Map();
+        this.processingQueue = [];
+        this.isProcessing = false;
+        this.compiledRegex = {
+            ecom: /amazon|flipkart/i,
+            quickcom: /bigbasket|blinkit|zepto|swiggy/i
+        };
+        this.performanceMonitor = new PerformanceMonitor();
+        
         this.initializeEventListeners();
+    }
+    
+    // Cleanup function to prevent memory leaks
+    cleanup() {
+        // Clear caches
+        this.cache.clear();
+        
+        // Clear cached quantities from data objects
+        if (this.rawData && this.rawData.length > 0) {
+            for (let i = 1; i < this.rawData.length; i++) {
+                const row = this.rawData[i];
+                if (row && row._cachedQuantity !== undefined) {
+                    delete row._cachedQuantity;
+                }
+            }
+        }
+        
+        // Clear performance metrics
+        this.performanceMonitor.metrics.clear();
+        
+        console.log('🧹 Cleanup completed - memory optimized');
     }
 
     initializeEventListeners() {
@@ -203,46 +235,33 @@ class ExcelMISGenerator {
         }
     }
 
-    // Get the quantity as a proper number (ensuring non-negative values)
+    // Optimized quantity calculation with caching
     getQuantity(row) {
-        if (!row || typeof row !== 'object') {
-            console.warn('Invalid row provided to getQuantity');
-            return 0;
+        if (!row || typeof row !== 'object') return 0;
+        
+        // Check cache first
+        if (row._cachedQuantity !== undefined) {
+            return row._cachedQuantity;
         }
 
         try {
-            // First try to get the quantity from SALES Invoice QTY
-            let qty = row['SALES Invoice QTY'];
+            // Try different quantity fields in order of preference
+            let qty = row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0;
             
-            // If that's not available or is zero, try DELIVERY Note QTY
-            if (!qty || qty === 0 || qty === '0') {
-                qty = row['DELIVERY Note QTY'];
-            }
-            
-            // Handle null/undefined values
             if (qty === null || qty === undefined) {
+                row._cachedQuantity = 0;
                 return 0;
             }
             
-            // Convert to a number, handling various formats
-            if (typeof qty === 'string') {
-                // Remove any non-numeric characters except decimal point and minus sign
-                qty = qty.replace(/[^\d.-]/g, '');
-                
-                // Handle empty string after cleaning
-                if (qty === '' || qty === '-') {
-                    return 0;
-                }
-            }
+            // Fast numeric conversion
+            const numQty = +qty; // Faster than parseFloat for most cases
             
-            // Parse as float and default to 0 if NaN
-            const numQty = parseFloat(qty);
-            const finalQty = isNaN(numQty) ? 0 : numQty;
+            // Cache the result
+            row._cachedQuantity = isNaN(numQty) ? 0 : Math.max(0, numQty);
+            return row._cachedQuantity;
             
-            // Ensure we don't return negative quantities (additional safety check)
-            return Math.max(0, finalQty);
         } catch (error) {
-            console.error('Error in getQuantity:', error, row);
+            row._cachedQuantity = 0;
             return 0;
         }
     }
@@ -254,15 +273,23 @@ class ExcelMISGenerator {
                 return;
             }
 
-            // Convert raw data to objects
+            this.performanceMonitor.start('Total Report Generation');
+
+            // Optimized data conversion
+            this.performanceMonitor.start('Data Conversion');
             const headers = this.rawData[0];
-            const dataObjects = this.rawData.slice(1).map(row => {
+            const dataObjects = new Array(this.rawData.length - 1);
+            
+            // Pre-allocate array and use for loop for better performance
+            for (let i = 1; i < this.rawData.length; i++) {
+                const row = this.rawData[i];
                 const obj = {};
-                headers.forEach((header, index) => {
-                    obj[header] = row[index] || '';
-                });
-                return obj;
-            });
+                for (let j = 0; j < headers.length; j++) {
+                    obj[headers[j]] = row[j] || '';
+                }
+                dataObjects[i - 1] = obj;
+            }
+            this.performanceMonitor.end('Data Conversion');
             
             // Log initial data stats
             console.log('📋 INITIAL DATA STATS:');
@@ -273,14 +300,18 @@ class ExcelMISGenerator {
 
             // Filter out rows with negative CBM and invoice quantity values BEFORE categorization
             console.log('🔍 Starting data filtering process...');
+            this.performanceMonitor.start('Data Filtering');
             const filteredData = this.filterNegativeValues(dataObjects);
+            this.performanceMonitor.end('Data Filtering');
             
             console.log(`✅ Filtering complete! Processing ${filteredData.length} valid rows for report generation`);
 
             // Generate all three reports with filtered data
+            this.performanceMonitor.start('Report Generation');
             this.generateEcomReport(filteredData);
             this.generateQuickcomReport(filteredData);
             this.generateOfflineReport(filteredData);
+            this.performanceMonitor.end('Report Generation');
 
             // Display results
             this.displayAllReports();
@@ -325,6 +356,8 @@ class ExcelMISGenerator {
             
             // Validate data integrity for large files
             this.validateDataIntegrity(dataObjects, filteredData);
+            
+            this.performanceMonitor.end('Total Report Generation');
 
             // Show LR Missing section and update data
             showLRMissingSection();
@@ -336,7 +369,7 @@ class ExcelMISGenerator {
                 const lrNo = row['SHIPMENT Awb NUMBER'] || '';
                 return !lrNo || lrNo.toString().trim() === '';
             }).length;
-            
+
             console.log('Dashboard LR Pending:', dashboardStats ? dashboardStats.lrPending : 'N/A');
             console.log('LR Missing Section Count:', lrMissingCount);
             console.log('Data consistency check:', dashboardStats ? (dashboardStats.lrPending === lrMissingCount) : 'N/A');
@@ -358,53 +391,29 @@ class ExcelMISGenerator {
         let negativeCBMCount = 0;
         let negativeQtyCount = 0;
         
-        const filteredData = data.filter(row => {
-            try {
-                // Check CBM values with better error handling
-                const siTotalCBM = parseFloat(row['SI Total CBM'] || 0);
-                const dnTotalCBM = parseFloat(row['DN Total CBM'] || 0);
-                const perUnitCBM = parseFloat(row['Per Unit CBM'] || 0);
-                
-                // Check quantity values using the same logic as getQuantity
-                const salesQty = parseFloat(row['SALES Invoice QTY'] || 0);
-                const deliveryQty = parseFloat(row['DELIVERY Note QTY'] || 0);
-                
-                // Filter out rows where any CBM value is negative
-                const hasNegativeCBM = siTotalCBM < 0 || dnTotalCBM < 0 || perUnitCBM < 0;
-                
-                // Filter out rows where any quantity value is negative
-                const hasNegativeQty = salesQty < 0 || deliveryQty < 0;
-                
-                // Count filtered rows
-                if (hasNegativeCBM || hasNegativeQty) {
+        // Optimized filtering using for loop
+        const filteredData = [];
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
+            
+            // Fast numeric conversion using unary plus operator
+            const siTotalCBM = +(row['SI Total CBM'] || 0);
+            const dnTotalCBM = +(row['DN Total CBM'] || 0);
+            const perUnitCBM = +(row['Per Unit CBM'] || 0);
+            const salesQty = +(row['SALES Invoice QTY'] || 0);
+            const deliveryQty = +(row['DELIVERY Note QTY'] || 0);
+            
+            // Check for negative values
+            if (siTotalCBM < 0 || dnTotalCBM < 0 || perUnitCBM < 0 || 
+                salesQty < 0 || deliveryQty < 0) {
                     filteredCount++;
-                    if (hasNegativeCBM) negativeCBMCount++;
-                    if (hasNegativeQty) negativeQtyCount++;
-                    
-                    // Only log in development mode to avoid console spam
-                    if (process?.env?.NODE_ENV !== 'production') {
-                        console.log('🚫 Filtered out row:', {
-                            invoice: row['SALES Invoice NO'] || row['DELIVERY Note NO'],
-                            customer: row['Customer'] || 'N/A',
-                            customerGroup: row['Customer Group'] || 'N/A',
-                            siTotalCBM: siTotalCBM.toFixed(2),
-                            dnTotalCBM: dnTotalCBM.toFixed(2),
-                            perUnitCBM: perUnitCBM.toFixed(2),
-                            salesQty: salesQty.toFixed(2),
-                            deliveryQty: deliveryQty.toFixed(2),
-                            reason: hasNegativeCBM ? 'Negative CBM' : 'Negative Quantity'
-                        });
-                    }
-                }
-                
-                // Keep only rows with non-negative values
-                return !hasNegativeCBM && !hasNegativeQty;
-            } catch (error) {
-                console.error('Error filtering row:', error, row);
-                // Include row in filtered data if there's an error parsing it
-                return true;
+                if (siTotalCBM < 0 || dnTotalCBM < 0 || perUnitCBM < 0) negativeCBMCount++;
+                if (salesQty < 0 || deliveryQty < 0) negativeQtyCount++;
+                continue; // Skip this row
             }
-        });
+            
+            filteredData.push(row);
+        }
         
         // Log comprehensive filtering summary
         console.log('📊 FILTERING SUMMARY:');
@@ -581,10 +590,10 @@ class ExcelMISGenerator {
     }
 
     generateEcomReport(data) {
-        // Filter for E-commerce channel based on Customer Group
+        // Optimized filtering using pre-compiled regex
         const ecomData = data.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            return customerGroup.includes('amazon') || customerGroup.includes('flipkart');
+            return this.compiledRegex.ecom.test(customerGroup);
         });
 
         // E-com Excel headers
@@ -610,13 +619,10 @@ class ExcelMISGenerator {
     }
 
     generateQuickcomReport(data) {
-        // Filter for Quick-commerce channel based on Customer Group
+        // Optimized filtering using pre-compiled regex
         const quickcomData = data.filter(row => {
             const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            return customerGroup.includes('bigbasket') || 
-                   customerGroup.includes('blinkit') || 
-                   customerGroup.includes('zepto') || 
-                   customerGroup.includes('swiggy');
+            return this.compiledRegex.quickcom.test(customerGroup);
         });
 
         // Quick-com Excel headers
@@ -639,30 +645,13 @@ class ExcelMISGenerator {
     }
 
     generateOfflineReport(data) {
-        // Filter for offline channels - include everything EXCEPT specified platforms
+        // Optimized filtering for offline channels
         const offlineData = data.filter(row => {
-            const customerGroup = (row['Customer Group'] || '');
+            const customerGroup = (row['Customer Group'] || '').toLowerCase();
             
-            // Convert to lowercase for case-insensitive comparison
-            const customerGroupLower = customerGroup.toLowerCase();
-            
-            // List of platforms to EXCLUDE from offline
-            const excludedPlatforms = [
-                'flipkart',
-                'amazon', 
-                'bigbasket',
-                'blinkit',
-                'zepto',
-                'swiggy'
-            ];
-            
-            // Check if customer group contains any of the excluded platforms
-            const isExcluded = excludedPlatforms.some(platform => 
-                customerGroupLower.includes(platform)
-            );
-            
-            // Include in offline if it's NOT in the excluded platforms list
-            return !isExcluded;
+            // Use pre-compiled regex for faster exclusion check
+            return !this.compiledRegex.ecom.test(customerGroup) && 
+                   !this.compiledRegex.quickcom.test(customerGroup);
         });
 
         // Offline Excel headers
@@ -1635,24 +1624,24 @@ function filterBySelectedDate() {
     if (selectedDateData.length > 0) {
         summarySection.style.display = 'block';
         tableSection.style.display = 'block';
-        
+
         // Update summary for selected date data only
         updateLRMissingSummary(selectedDateData);
-        
+
         // Reset category filter and display data
         currentCategory = 'all';
         const categoryFilter = document.getElementById('lrCategoryFilter');
         if (categoryFilter) {
             categoryFilter.value = 'all';
         }
-        
+
         // Set filtered data and display immediately
         filteredLRData = selectedDateData;
         displayFilteredData();
     } else {
         summarySection.style.display = 'none';
         tableSection.style.display = 'none';
-        
+
         // Update record count to show 0 when no data
         const recordCount = document.getElementById('recordCount');
         if (recordCount) {
@@ -2064,5 +2053,34 @@ function downloadLRMissingExcel() {
             downloadBtn.textContent = '📥 Download LR Missing Report';
             downloadBtn.disabled = false;
         }
+    }
+}
+
+// Performance monitoring utility
+class PerformanceMonitor {
+    constructor() {
+        this.metrics = new Map();
+    }
+    
+    start(label) {
+        this.metrics.set(label, performance.now());
+    }
+    
+    end(label) {
+        const startTime = this.metrics.get(label);
+        if (startTime) {
+            const duration = performance.now() - startTime;
+            console.log(`⚡ ${label}: ${duration.toFixed(2)}ms`);
+            this.metrics.delete(label);
+            return duration;
+        }
+        return 0;
+    }
+    
+    measure(label, fn) {
+        this.start(label);
+        const result = fn();
+        this.end(label);
+        return result;
     }
 }

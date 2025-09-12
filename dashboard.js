@@ -3,6 +3,15 @@ class MISDashboard {
         this.processedData = null;
         this.currentView = 'date'; // 'date' or 'month'
         
+        // Performance optimizations
+        this.statsCache = new Map();
+        this.lastDataHash = null;
+        this.compiledRegex = {
+            ecom: /amazon|flipkart/i,
+            quickcom: /bigbasket|blinkit|zepto|swiggy/i
+        };
+        this.excludedPlatforms = ['flipkart', 'amazon', 'bigbasket', 'blinkit', 'zepto', 'swiggy'];
+        
         this.initializeUI();
         this.initializeEventListeners();
     }
@@ -299,54 +308,118 @@ class MISDashboard {
     }
     
     updateDashboard(filteredData) {
-        // Sort filtered data by Sales Invoice Date before processing
-        const sortedData = this.sortDataByDate(filteredData);
+        if (!filteredData || !Array.isArray(filteredData)) return;
         
-        // Group data by category
-        const ecomData = sortedData.filter(row => {
-            const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            return customerGroup.includes('amazon') || customerGroup.includes('flipkart');
-        });
+        // Check cache first
+        const dataHash = this.hashData(filteredData);
+        if (this.lastDataHash === dataHash && this.statsCache.has('dashboard_stats')) {
+            const cachedStats = this.statsCache.get('dashboard_stats');
+            this.updateAllCardStats(cachedStats);
+            return;
+        }
         
-        const quickcomData = sortedData.filter(row => {
-            const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            return customerGroup.includes('bigbasket') || 
-                   customerGroup.includes('blinkit') || 
-                   customerGroup.includes('zepto') || 
-                   customerGroup.includes('swiggy');
-        });
+        // Single-pass categorization and calculation for maximum performance
+        const stats = this.calculateStatsOptimized(filteredData);
         
-        const offlineData = sortedData.filter(row => {
-            const customerGroup = (row['Customer Group'] || '').toLowerCase();
-            
-            // List of platforms to EXCLUDE from offline
-            const excludedPlatforms = [
-                'flipkart',
-                'amazon', 
-                'bigbasket',
-                'blinkit',
-                'zepto',
-                'swiggy'
-            ];
-            
-            // Check if customer group contains any of the excluded platforms
-            const isExcluded = excludedPlatforms.some(platform => 
-                customerGroup.includes(platform)
-            );
-            
-            // Include in offline if it's NOT in the excluded platforms list
-            return !isExcluded;
-        });
-        
-        // Calculate statistics
-        const stats = {
-            total: this.calculateStats(sortedData),
-            ecom: this.calculateStats(ecomData),
-            quickcom: this.calculateStats(quickcomData),
-            offline: this.calculateStats(offlineData)
-        };
+        // Cache results
+        this.statsCache.set('dashboard_stats', stats);
+        this.lastDataHash = dataHash;
         
         // Update UI
+        this.updateAllCardStats(stats);
+    }
+    
+    // Optimized single-pass calculation
+    calculateStatsOptimized(data) {
+        const stats = {
+            total: { invoices: 0, quantity: 0, cbm: 0, lrPending: 0 },
+            ecom: { invoices: 0, quantity: 0, cbm: 0, lrPending: 0 },
+            quickcom: { invoices: 0, quantity: 0, cbm: 0, lrPending: 0 },
+            offline: { invoices: 0, quantity: 0, cbm: 0, lrPending: 0 }
+        };
+        
+        // Track unique invoices for each category
+        const uniqueInvoices = {
+            total: new Set(),
+            ecom: new Set(),
+            quickcom: new Set(),
+            offline: new Set()
+        };
+        
+        // Single pass through data
+        for (let i = 0; i < data.length; i++) {
+            const row = data[i];
+            const customerGroup = (row['Customer Group'] || '').toLowerCase();
+            
+            // Determine category using pre-compiled regex
+            let category = 'offline';
+            if (this.compiledRegex.ecom.test(customerGroup)) {
+                category = 'ecom';
+            } else if (this.compiledRegex.quickcom.test(customerGroup)) {
+                category = 'quickcom';
+            }
+            
+            // Calculate values once
+            const invoiceNo = row['SALES Invoice NO'] || row['DELIVERY Note NO'];
+            const quantity = this.getQuantity(row);
+            const cbm = parseFloat(row['SI Total CBM'] || row['DN Total CBM'] || 0);
+            const lrNo = row['SHIPMENT Awb NUMBER'] || '';
+            const hasLR = lrNo && lrNo.toString().trim() !== '';
+            
+            // Update stats for total and specific category
+            [stats.total, stats[category]].forEach((statObj, index) => {
+                const invoiceSet = index === 0 ? uniqueInvoices.total : uniqueInvoices[category];
+                
+                if (invoiceNo && invoiceNo.toString().trim() !== '') {
+                    invoiceSet.add(invoiceNo.toString().trim());
+                }
+                
+                statObj.quantity += quantity;
+                if (!isNaN(cbm) && cbm >= 0) {
+                    statObj.cbm += cbm;
+                }
+                if (!hasLR) {
+                    statObj.lrPending++;
+                }
+            });
+        }
+        
+        // Set invoice counts from unique sets
+        stats.total.invoices = uniqueInvoices.total.size;
+        stats.ecom.invoices = uniqueInvoices.ecom.size;
+        stats.quickcom.invoices = uniqueInvoices.quickcom.size;
+        stats.offline.invoices = uniqueInvoices.offline.size;
+        
+        // Format CBM values
+        Object.values(stats).forEach(stat => {
+            stat.cbm = stat.cbm.toFixed(2);
+        });
+        
+        return stats;
+    }
+    
+    // Simple hash function for data change detection
+    hashData(data) {
+        if (!Array.isArray(data) || data.length === 0) return 'empty';
+        
+        // Create a simple hash based on data length and first/last rows
+        const firstRow = data[0];
+        const lastRow = data[data.length - 1];
+        const hash = `${data.length}_${JSON.stringify(firstRow)}_${JSON.stringify(lastRow)}`;
+        
+        // Simple string hash
+        let hashValue = 0;
+        for (let i = 0; i < hash.length; i++) {
+            const char = hash.charCodeAt(i);
+            hashValue = ((hashValue << 5) - hashValue) + char;
+            hashValue = hashValue & hashValue; // Convert to 32-bit integer
+        }
+        
+        return hashValue.toString();
+    }
+    
+    // Helper method to update all card stats
+    updateAllCardStats(stats) {
         this.updateCardStats('total', stats.total);
         this.updateCardStats('ecom', stats.ecom);
         this.updateCardStats('quickcom', stats.quickcom);
@@ -504,45 +577,33 @@ class MISDashboard {
     
     // Get the quantity as a proper number (ensuring non-negative values)
     // This method matches the logic from script.js to ensure consistency
+    // Optimized quantity calculation with caching
     getQuantity(row) {
-        if (!row || typeof row !== 'object') {
-            console.warn('Invalid row provided to getQuantity in dashboard');
-            return 0;
+        if (!row || typeof row !== 'object') return 0;
+        
+        // Check cache first
+        if (row._cachedQuantity !== undefined) {
+            return row._cachedQuantity;
         }
-
+        
         try {
-            // First try to get the quantity from SALES Invoice QTY
-            let qty = row['SALES Invoice QTY'];
+            // Try different quantity fields in order of preference
+            let qty = row['SALES Invoice QTY'] || row['DELIVERY Note QTY'] || 0;
             
-            // If that's not available or is zero, try DELIVERY Note QTY
-            if (!qty || qty === 0 || qty === '0') {
-                qty = row['DELIVERY Note QTY'];
-            }
-            
-            // Handle null/undefined values
             if (qty === null || qty === undefined) {
+                row._cachedQuantity = 0;
                 return 0;
             }
             
-            // Convert to a number, handling various formats
-            if (typeof qty === 'string') {
-                // Remove any non-numeric characters except decimal point and minus sign
-                qty = qty.replace(/[^\d.-]/g, '');
-                
-                // Handle empty string after cleaning
-                if (qty === '' || qty === '-') {
-                    return 0;
-                }
-            }
+            // Fast numeric conversion
+            const numQty = +qty; // Faster than parseFloat for most cases
             
-            // Parse as float and default to 0 if NaN
-            const numQty = parseFloat(qty);
-            const finalQty = isNaN(numQty) ? 0 : numQty;
+            // Cache the result
+            row._cachedQuantity = isNaN(numQty) ? 0 : Math.max(0, numQty);
+            return row._cachedQuantity;
             
-            // Ensure we don't return negative quantities (additional safety check)
-            return Math.max(0, finalQty);
         } catch (error) {
-            console.error('Error in dashboard getQuantity:', error, row);
+            row._cachedQuantity = 0;
             return 0;
         }
     }
